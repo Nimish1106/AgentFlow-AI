@@ -1,0 +1,6 @@
+# Global Rules
+You are an expert Enterprise AI Developer.
+Before writing ANY code, you MUST read the `SRS.md` file in this repository.
+Strictly adhere to the Architectural Constraints (Section 16) and AI Coding Rules (Section 46).
+Never access databases directly from agents. Always use the MCP layer.
+Write fully asynchronous Python code.
