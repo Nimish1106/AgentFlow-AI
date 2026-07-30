@@ -61,7 +61,11 @@ Always provide:
 
 ## Repository status
 
-This repo is **pre-implementation**. It currently contains only the specification (`srs.md`), the architecture diagram (`architecture_dig.png`), `.clauderules`, and `.roo/skills/`. There is no `app/`, `frontend/`, `requirements.txt`, `docker-compose.yml`, or test suite yet.
+**Phase 1 of 8 is complete** (SRS §48): project setup, PostgreSQL, Redis, FastAPI, Docker.
+
+In place: `app/config` (Pydantic v2 settings), `app/database` (async SQLAlchemy 2.x session + async Redis), `app/models` (User, SupportTicket, Subscription, Invoice, WorkflowRun, AgentExecutionLog, AuditLog, enums), `app/services` (Ticket/Workflow/Queue + typed exceptions), `app/api/routes` (health, tickets, workflows), `app/observability/logging.py`, Alembic migration `0001_initial_schema`, `scripts/seed_database.py`, Docker Compose (postgres/redis/backend), and a passing pytest suite.
+
+Not started — Phases 2-8: LangGraph + GraphState + Supervisor + Task Planner, Enterprise MCP server and tools, the six agents, RAG/Qdrant, Results Aggregator + Risk Engine + HITL, React frontend. The packages `app/agents`, `app/graph`, `app/mcp`, `app/rag`, `app/dispatcher`, `app/prompts` exist but hold only empty `__init__.py` files; `frontend/` and `docs/` are empty. LangGraph, Groq, Qdrant, and the MCP SDK are not yet in `requirements.txt`.
 
 `srs.md` is the authoritative contract. **Read it before writing any code** — specifically Section 16 (Architectural Constraints) and Section 46 (AI Coding Rules). When scaffolding new code, follow the folder layout in Section 47 rather than inventing one.
 
@@ -107,11 +111,11 @@ Retry only recoverable failures (MCP timeout, DB connection, vector-search timeo
 
 ## Commands
 
-No build tooling exists yet. Once scaffolded, the SRS specifies:
-
 ```bash
-docker compose up --build   # backend, postgres, redis, qdrant, enterprise-mcp, frontend
-pytest                      # target >=80% coverage
+docker compose up --build                              # postgres, redis, backend (migrations run on boot)
+docker compose exec backend python -m scripts.seed_database
+pytest                                                 # target >=80% coverage
+alembic upgrade head                                   # local venv only
 ```
 
-Services share a custom Docker bridge network; the backend reaches MCP at an internal hostname (e.g. `http://enterprise-mcp:8000`).
+Services share a custom Docker bridge network. Later phases add qdrant, enterprise-mcp, and frontend to Compose; the backend will reach MCP at an internal hostname (e.g. `http://enterprise-mcp:8000`).
