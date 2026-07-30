@@ -110,16 +110,14 @@ def make_supervisor_node(
             "current_node": NODE_NAME,
             "workflow_status": "running",
             "ticket_priority": classification.priority,
+            # Reduced fields (shared_context merges, completed_agents appends):
+            # return only this node's contribution, never the spread of state.
             "shared_context": {
-                **state.get("shared_context", {}),
                 "intent": classification.intent,
                 "domains": domains,
                 "priority": classification.priority,
             },
-            "completed_agents": [
-                *state.get("completed_agents", []),
-                AgentName.SUPERVISOR.value,
-            ],
+            "completed_agents": [AgentName.SUPERVISOR.value],
             "messages": [AIMessage(content=summary)],
         }
 

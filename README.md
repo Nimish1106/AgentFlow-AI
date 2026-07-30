@@ -1,4 +1,4 @@
-# AgentOps AI
+# AgentFlow AI
 
 Enterprise Multi-Agent Customer Operations Platform for B2B SaaS.
 `srs.md` is the authoritative specification.

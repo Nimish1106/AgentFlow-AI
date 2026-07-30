@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, Uuid, func
+from sqlalchemy import JSON, DateTime, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -28,6 +28,9 @@ class User(Base):
     )
     role: Mapped[UserRole] = mapped_column(
         as_db_enum(UserRole, "user_role"), default=UserRole.MEMBER, nullable=False
+    )
+    feature_flags: Mapped[dict] = mapped_column(
+        JSON, default=dict, server_default="{}", nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

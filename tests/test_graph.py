@@ -17,7 +17,12 @@ from app.graph.nodes.supervisor import (
     make_supervisor_node,
 )
 from app.graph.state import AgentResult, GraphState, build_initial_state
-from app.graph.workflow import build_workflow_graph, route_after_supervisor
+from app.graph.workflow import (
+    build_workflow_graph,
+    route_after_planner,
+    route_after_policy,
+    route_after_supervisor,
+)
 
 
 def make_agent_result(name: str) -> AgentResult:
@@ -145,10 +150,15 @@ class TestSupervisorNode:
         assert update["shared_context"]["domains"] == ["billing", "account"]
         assert update["shared_context"]["priority"] == "high"
 
-    async def test_preserves_existing_shared_context(self, fake_llm_factory):
+    async def test_returns_only_its_own_shared_context_contribution(
+        self, fake_llm_factory
+    ):
+        """shared_context carries a merge reducer: nodes return only their own
+        keys and LangGraph merges, so parallel writers cannot clobber."""
         node = make_supervisor_node(fake_llm_factory(result=self.classification()))
         update = await node(initial_state(shared_context={"customer_name": "Alice"}))
-        assert update["shared_context"]["customer_name"] == "Alice"
+        assert "customer_name" not in update["shared_context"]
+        assert set(update["shared_context"]) == {"intent", "domains", "priority"}
 
     async def test_records_itself_as_completed_and_emits_a_message(
         self, fake_llm_factory
@@ -259,26 +269,104 @@ class TestRouting:
         state = initial_state(workflow_status="running")
         assert route_after_supervisor(state) == PLANNER_NODE
 
+    def _plan_for(self, *agents: str):
+        return [
+            {
+                "task_id": f"task_{i}",
+                "task_name": agent,
+                "assigned_agent": agent,
+                "priority": "medium",
+                "depends_on": [],
+                "status": "pending",
+            }
+            for i, agent in enumerate(agents, start=1)
+        ]
+
+    def test_planner_fans_out_to_every_planned_domain_agent(self):
+        state = initial_state(
+            execution_plan=self._plan_for(
+                AgentName.BILLING.value,
+                AgentName.TECHNICAL.value,
+                AgentName.POLICY.value,
+                AgentName.RESPONSE.value,
+            )
+        )
+        assert route_after_planner(state) == [
+            AgentName.BILLING.value,
+            AgentName.TECHNICAL.value,
+        ]
+
+    def test_planner_with_no_domain_tasks_routes_to_policy(self):
+        state = initial_state(
+            execution_plan=self._plan_for(
+                AgentName.POLICY.value, AgentName.RESPONSE.value
+            )
+        )
+        assert route_after_planner(state) == [AgentName.POLICY.value]
+
+    def test_failed_policy_routes_to_end(self):
+        assert route_after_policy(initial_state(workflow_status="failed")) == END
+
+    def test_successful_policy_routes_to_response(self):
+        state = initial_state(workflow_status="running")
+        assert route_after_policy(state) == AgentName.RESPONSE.value
+
 
 class TestBaseGraph:
+    @pytest.fixture
+    def full_llm(self, fake_agent_llm_factory):
+        """One fake LLM serving every reasoning node in a full run."""
+        from app.agents.schemas import AgentOutcome, PolicyOutcome, ResponseOutcome
+
+        return fake_agent_llm_factory(
+            outcomes={
+                SupervisorClassification: SupervisorClassification(
+                    intent="Duplicate Invoice Charge",
+                    domains=[Domain.BILLING, Domain.ACCOUNT],
+                    priority="high",
+                ),
+                AgentOutcome: AgentOutcome(
+                    summary="Checked.", confidence=0.9, output_data={}
+                ),
+                PolicyOutcome: PolicyOutcome(
+                    summary="Approved.",
+                    confidence=0.98,
+                    approved=True,
+                    risk="low",
+                ),
+                ResponseOutcome: ResponseOutcome(
+                    customer_response="Your refund is on its way.",
+                    internal_note="Refund approved.",
+                    resolution_summary="Duplicate charge refunded.",
+                    confidence=0.95,
+                ),
+            }
+        )
+
+    def build(self, llm, fake_mcp_client_factory):
+        return build_workflow_graph(llm=llm, mcp_client=fake_mcp_client_factory())
+
     def test_graph_compiles_without_an_api_key(self):
         """Compilation must not require Groq credentials - the LLM resolves lazily."""
         assert build_workflow_graph() is not None
 
-    def test_compiled_graph_exposes_both_phase_2_nodes(self):
+    def test_compiled_graph_exposes_every_agent_node(self):
         nodes = build_workflow_graph().get_graph().nodes
         assert SUPERVISOR_NODE in nodes
         assert PLANNER_NODE in nodes
+        for agent in (
+            AgentName.BILLING,
+            AgentName.ACCOUNT,
+            AgentName.TECHNICAL,
+            AgentName.POLICY,
+            AgentName.RESPONSE,
+        ):
+            assert agent.value in nodes
 
-    async def test_end_to_end_run_produces_an_execution_plan(self, fake_llm_factory):
-        llm = fake_llm_factory(
-            result=SupervisorClassification(
-                intent="Duplicate Invoice Charge",
-                domains=[Domain.BILLING, Domain.ACCOUNT],
-                priority="high",
-            )
-        )
-        graph = build_workflow_graph(llm=llm)
+    async def test_end_to_end_run_produces_an_execution_plan(
+        self, full_llm, fake_mcp_client_factory
+    ):
+        graph = self.build(full_llm, fake_mcp_client_factory)
         config = {"configurable": {"thread_id": "wf_test_001"}}
 
         result = await graph.ainvoke(initial_state(), config=config)
@@ -289,25 +377,48 @@ class TestBaseGraph:
             AgentName.POLICY.value,
             AgentName.RESPONSE.value,
         ]
-        assert result["current_node"] == PLANNER_NODE
         assert result["errors"] == []
 
-    async def test_end_to_end_run_with_no_domains_still_plans_policy_and_response(
-        self, fake_llm_factory
+    async def test_end_to_end_run_executes_planned_agents_and_responds(
+        self, full_llm, fake_mcp_client_factory
     ):
-        llm = fake_llm_factory(
-            result=SupervisorClassification(
-                intent="General Enquiry", domains=[], priority="low"
-            )
-        )
-        graph = build_workflow_graph(llm=llm)
+        """SRS §37: plan-driven fan-out, policy gate, then the final response."""
+        graph = self.build(full_llm, fake_mcp_client_factory)
         result = await graph.ainvoke(
-            initial_state(), config={"configurable": {"thread_id": "wf_test_002"}}
+            initial_state(), config={"configurable": {"thread_id": "wf_full"}}
         )
-        assert [t["assigned_agent"] for t in result["execution_plan"]] == [
+
+        result_names = [r["agent_name"] for r in result["agent_results"]]
+        assert sorted(result_names[:2]) == [
+            AgentName.ACCOUNT.value,
+            AgentName.BILLING.value,
+        ]
+        assert result_names[2:] == [
             AgentName.POLICY.value,
             AgentName.RESPONSE.value,
         ]
+        assert AgentName.TECHNICAL.value not in result_names
+        assert result["final_response"] == "Your refund is on its way."
+        assert result["workflow_status"] == "completed"
+        assert result["risk_score"] == 0.2
+
+    async def test_end_to_end_run_with_no_domains_still_runs_policy_and_response(
+        self, full_llm, fake_mcp_client_factory
+    ):
+        from app.agents.schemas import PolicyOutcome  # noqa: F401 - clarity
+
+        full_llm.outcomes[SupervisorClassification] = SupervisorClassification(
+            intent="General Enquiry", domains=[], priority="low"
+        )
+        graph = self.build(full_llm, fake_mcp_client_factory)
+        result = await graph.ainvoke(
+            initial_state(), config={"configurable": {"thread_id": "wf_test_002"}}
+        )
+        assert [r["agent_name"] for r in result["agent_results"]] == [
+            AgentName.POLICY.value,
+            AgentName.RESPONSE.value,
+        ]
+        assert result["workflow_status"] == "completed"
 
     async def test_supervisor_failure_short_circuits_before_planning(
         self, fake_llm_factory
@@ -320,17 +431,27 @@ class TestBaseGraph:
         )
         assert result["workflow_status"] == "failed"
         assert result["execution_plan"] == []
+        assert result.get("final_response") is None
 
-    async def test_state_is_checkpointed_after_every_node(self, fake_llm_factory):
-        """SRS §46: each node checkpoints so the run is resumable."""
-        llm = fake_llm_factory(
-            result=SupervisorClassification(
-                intent="Duplicate Invoice Charge",
-                domains=[Domain.BILLING],
-                priority="high",
-            )
+    async def test_policy_failure_stops_before_the_response(
+        self, full_llm, fake_mcp_client_factory
+    ):
+        """SRS §35: no policy verdict means no customer-facing reply."""
+        from app.agents.schemas import PolicyOutcome
+
+        del full_llm.outcomes[PolicyOutcome]  # policy node now raises
+        graph = self.build(full_llm, fake_mcp_client_factory)
+        result = await graph.ainvoke(
+            initial_state(), config={"configurable": {"thread_id": "wf_pol_fail"}}
         )
-        graph = build_workflow_graph(llm=llm)
+        assert result["workflow_status"] == "failed"
+        assert result.get("final_response") is None
+
+    async def test_state_is_checkpointed_after_every_node(
+        self, full_llm, fake_mcp_client_factory
+    ):
+        """SRS §46: each node checkpoints so the run is resumable."""
+        graph = self.build(full_llm, fake_mcp_client_factory)
         config = {"configurable": {"thread_id": "wf_test_004"}}
         await graph.ainvoke(initial_state(), config=config)
 
@@ -338,17 +459,13 @@ class TestBaseGraph:
         assert len(checkpointed) > 1
         saved = await graph.aget_state(config)
         assert saved.values["execution_plan"]
+        assert saved.values["final_response"]
 
-    async def test_thread_id_isolates_separate_workflows(self, fake_llm_factory):
+    async def test_thread_id_isolates_separate_workflows(
+        self, full_llm, fake_mcp_client_factory
+    ):
         """HITL resumes by workflow_id as thread_id (SRS §38) - threads must not bleed."""
-        llm = fake_llm_factory(
-            result=SupervisorClassification(
-                intent="Duplicate Invoice Charge",
-                domains=[Domain.BILLING],
-                priority="high",
-            )
-        )
-        graph = build_workflow_graph(llm=llm)
+        graph = self.build(full_llm, fake_mcp_client_factory)
         await graph.ainvoke(
             initial_state(), config={"configurable": {"thread_id": "wf_a"}}
         )

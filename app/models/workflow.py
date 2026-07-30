@@ -59,8 +59,8 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    workflow_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("workflow_runs.workflow_id"), index=True, nullable=False
+    workflow_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("workflow_runs.workflow_id"), index=True, nullable=True
     )
     action: Mapped[str] = mapped_column(Text, nullable=False)
     performed_by: Mapped[str] = mapped_column(String(255), nullable=False)

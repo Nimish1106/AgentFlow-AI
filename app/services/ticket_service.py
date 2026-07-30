@@ -7,7 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import TicketRequest
-from app.models import SupportTicket, User, WorkflowRun
+from app.models import SupportTicket, TicketNote, User, WorkflowRun
+from app.models.enums import TicketPriority, TicketStatus
 from app.services.exceptions import CustomerNotFoundError, TicketNotFoundError
 from app.services.queue_service import QueueService
 
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 class TicketService:
     """Creates tickets and their workflow runs, and reads ticket details."""
 
-    def __init__(self, session: AsyncSession, queue: QueueService) -> None:
+    def __init__(self, session: AsyncSession, queue: QueueService | None = None) -> None:
         self._session = session
         self._queue = queue
 
@@ -27,6 +28,9 @@ class TicketService:
         The DB transaction commits only after the enqueue succeeds, so a queue
         failure never leaves an orphaned workflow row.
         """
+        if self._queue is None:
+            raise RuntimeError("TicketService requires a queue to create workflows")
+
         customer = await self._session.get(User, request.customer_id)
         if customer is None:
             raise CustomerNotFoundError(str(request.customer_id))
@@ -66,3 +70,43 @@ class TicketService:
             .limit(1)
         )
         return ticket, workflow
+
+    async def update_ticket(
+        self,
+        ticket_id: uuid.UUID,
+        status: TicketStatus | None = None,
+        priority: TicketPriority | None = None,
+    ) -> SupportTicket:
+        """Update a ticket's status and/or priority."""
+        ticket = await self._session.get(SupportTicket, ticket_id)
+        if ticket is None:
+            raise TicketNotFoundError(str(ticket_id))
+
+        if status is not None:
+            ticket.status = status
+        if priority is not None:
+            ticket.priority = priority
+        await self._session.commit()
+
+        logger.info(
+            "ticket_id=%s updated status=%s priority=%s",
+            ticket.id,
+            ticket.status.value,
+            ticket.priority.value,
+        )
+        return ticket
+
+    async def add_internal_note(
+        self, ticket_id: uuid.UUID, author: str, note: str
+    ) -> TicketNote:
+        """Attach an internal (non-customer-facing) note to a ticket."""
+        ticket = await self._session.get(SupportTicket, ticket_id)
+        if ticket is None:
+            raise TicketNotFoundError(str(ticket_id))
+
+        ticket_note = TicketNote(ticket_id=ticket.id, author=author, note=note)
+        self._session.add(ticket_note)
+        await self._session.commit()
+
+        logger.info("ticket_id=%s internal note added by %s", ticket.id, author)
+        return ticket_note

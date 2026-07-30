@@ -20,6 +20,15 @@ TaskPriority = Literal["low", "medium", "high"]
 AgentStatus = Literal["success", "failed", "skipped"]
 
 
+def merge_dicts(left: Dict, right: Dict) -> Dict:
+    """Reducer for ``shared_context``: later writes win key-by-key.
+
+    Parallel domain agents each write a namespaced key (``billing_agent``,
+    ``account_agent`` ...) so concurrent merges never collide.
+    """
+    return {**left, **right}
+
+
 class ExecutionTask(TypedDict):
     """One unit of work in the execution plan (SRS §22).
 
@@ -60,12 +69,14 @@ class GraphState(TypedDict):
     ticket_priority: str
 
     execution_plan: List[ExecutionTask]
-    completed_agents: List[str]
+    # Reducers on the fields below: parallel domain agents all write them in the
+    # same superstep, and LangGraph rejects concurrent writes to unreduced keys.
+    completed_agents: Annotated[List[str], operator.add]
     current_node: str
-    shared_context: Dict
+    shared_context: Annotated[Dict, merge_dicts]
 
     messages: Annotated[List[BaseMessage], add_messages]
-    tool_history: List[str]
+    tool_history: Annotated[List[str], operator.add]
 
     risk_score: float
     requires_hitl: bool

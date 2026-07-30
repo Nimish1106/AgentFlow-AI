@@ -108,9 +108,15 @@ async def seed() -> None:
             return
 
         total_invoices = 0
-        for _ in range(NUM_COMPANIES):
-            user, subscription, invoices = _build_company(fake)
-            session.add(user)
+        companies = [_build_company(fake) for _ in range(NUM_COMPANIES)]
+
+        # The models declare no ORM relationships, so the unit of work cannot
+        # infer that users must be inserted before their subscriptions and
+        # invoices. Flush the parent rows first to satisfy the FKs.
+        session.add_all([user for user, _, _ in companies])
+        await session.flush()
+
+        for _, subscription, invoices in companies:
             session.add(subscription)
             session.add_all(invoices)
             total_invoices += len(invoices)

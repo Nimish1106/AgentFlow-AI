@@ -15,3 +15,11 @@ class TicketNotFoundError(NotFoundError):
 
 class WorkflowNotFoundError(NotFoundError):
     """The referenced workflow run does not exist."""
+
+
+class InvoiceNotFoundError(NotFoundError):
+    """The referenced invoice does not exist."""
+
+
+class SubscriptionNotFoundError(NotFoundError):
+    """No subscription exists for the referenced customer."""

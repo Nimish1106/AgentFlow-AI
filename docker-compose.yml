@@ -2,20 +2,20 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-agentops}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentops}
-      POSTGRES_DB: ${POSTGRES_DB:-agentops}
+      POSTGRES_USER: ${POSTGRES_USER:-agentflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentflow}
+      POSTGRES_DB: ${POSTGRES_DB:-agentflow}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agentops} -d ${POSTGRES_DB:-agentops}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agentflow} -d ${POSTGRES_DB:-agentflow}"]
       interval: 5s
       timeout: 5s
       retries: 10
     networks:
-      - agentops-network
+      - agentflow-network
 
   redis:
     image: redis:7-alpine
@@ -27,7 +27,7 @@ services:
       timeout: 5s
       retries: 10
     networks:
-      - agentops-network
+      - agentflow-network
 
   backend:
     build:
@@ -35,8 +35,9 @@ services:
       dockerfile: docker/Dockerfile.backend
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-agentops}:${POSTGRES_PASSWORD:-agentops}@postgres:5432/${POSTGRES_DB:-agentops}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-agentflow}:${POSTGRES_PASSWORD:-agentflow}@postgres:5432/${POSTGRES_DB:-agentflow}
       REDIS_URL: redis://redis:6379/0
+      MCP_SERVER_URL: http://enterprise-mcp:8000
     ports:
       - "8000:8000"
     depends_on:
@@ -45,10 +46,28 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - agentops-network
+      - agentflow-network
+
+  enterprise-mcp:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    command: uvicorn app.mcp.server.main:app --host 0.0.0.0 --port 8000
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-agentflow}:${POSTGRES_PASSWORD:-agentflow}@postgres:5432/${POSTGRES_DB:-agentflow}
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend:
+        # Backend runs `alembic upgrade head` on boot; wait so the schema exists.
+        condition: service_started
+    networks:
+      - agentflow-network
 
 networks:
-  agentops-network:
+  agentflow-network:
     driver: bridge
 
 volumes:

@@ -3,10 +3,12 @@
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from langchain_core.messages import AIMessage
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401  (populate Base.metadata)
+import app.mcp.server.runtime as mcp_runtime
 from app.database.base import Base
 from app.database.redis import get_redis
 from app.database.session import get_db
@@ -57,6 +59,104 @@ def fake_llm_factory():
     return FakeStructuredLLM
 
 
+class FakeAgentLLM:
+    """Chat-model stand-in for agents that bind tools and emit structured output.
+
+    ``tool_call_batches`` scripts the tool loop: each ``ainvoke`` on the bound
+    model pops one batch and returns an AIMessage carrying those tool_calls;
+    when the queue is empty it returns a plain AIMessage, ending the loop.
+
+    ``outcomes`` maps schema class -> instance, so one fake can serve every
+    reasoning node in a full-graph run (Supervisor, domain agents, Policy,
+    Response), each requesting its own schema.
+    """
+
+    def __init__(
+        self,
+        outcomes: dict | None = None,
+        tool_call_batches: list[list[dict]] | None = None,
+    ) -> None:
+        self.outcomes = outcomes or {}
+        self.tool_call_batches = list(tool_call_batches or [])
+        self.bound_tools: list = []
+        self.structured_calls: list = []
+
+    def bind_tools(self, tools, **kwargs):  # noqa: ARG002
+        self.bound_tools.append(list(tools))
+        return _FakeBoundModel(self)
+
+    def with_structured_output(self, schema, **kwargs):  # noqa: ARG002
+        return _FakeStructuredModel(self, schema)
+
+
+class _FakeBoundModel:
+    def __init__(self, parent: FakeAgentLLM) -> None:
+        self._parent = parent
+
+    async def ainvoke(self, messages, **kwargs):  # noqa: ARG002
+        if self._parent.tool_call_batches:
+            batch = self._parent.tool_call_batches.pop(0)
+            return AIMessage(content="", tool_calls=batch)
+        return AIMessage(content="done")
+
+
+class _FakeStructuredModel:
+    def __init__(self, parent: FakeAgentLLM, schema) -> None:
+        self._parent = parent
+        self._schema = schema
+
+    async def ainvoke(self, messages, **kwargs):  # noqa: ARG002
+        self._parent.structured_calls.append((self._schema, messages))
+        try:
+            return self._parent.outcomes[self._schema]
+        except KeyError as exc:
+            raise AssertionError(
+                f"no scripted outcome for schema {self._schema!r}"
+            ) from exc
+
+
+@pytest.fixture
+def fake_agent_llm_factory():
+    """Return a builder for FakeAgentLLM instances."""
+    return FakeAgentLLM
+
+
+class FakeMCPClient:
+    """EnterpriseMCPClient stand-in returning scripted tool payloads.
+
+    ``responses`` maps tool name -> dict payload, callable, or list of
+    payloads consumed one per call (to script retry sequences). Unknown tools
+    return a structured not_found error, mirroring the real server's
+    exceptions-never-cross-the-boundary contract.
+    """
+
+    def __init__(self, responses: dict | None = None) -> None:
+        self.responses = responses or {}
+        self.calls: list[tuple[str, dict]] = []
+
+    async def list_tools(self) -> list[str]:
+        return list(self.responses)
+
+    async def call_tool(self, name: str, arguments: dict) -> dict:
+        self.calls.append((name, arguments))
+        response = self.responses.get(
+            name, {"error": f"unknown tool {name}", "code": "not_found"}
+        )
+        if isinstance(response, list):
+            response = response.pop(0) if len(response) > 1 else response[0]
+        if callable(response):
+            response = response(arguments)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+@pytest.fixture
+def fake_mcp_client_factory():
+    """Return a builder for FakeMCPClient instances."""
+    return FakeMCPClient
+
+
 @pytest_asyncio.fixture
 async def db_engine():
     """Fresh in-memory SQLite database per test."""
@@ -81,6 +181,14 @@ async def session_factory(db_engine):
 async def fake_redis():
     """Fake Redis shared between the app under test and assertions."""
     return FakeRedis()
+
+
+@pytest_asyncio.fixture
+async def mcp_session_factory(session_factory):
+    """Point the MCP runtime at the test database; restore afterwards."""
+    mcp_runtime.set_session_factory(session_factory)
+    yield session_factory
+    mcp_runtime._session_factory = None
 
 
 @pytest_asyncio.fixture

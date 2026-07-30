@@ -1,6 +1,6 @@
 # Software Requirements Specification (SRS)
 
-# AgentOps AI
+# AgentFlow AI
 ## Enterprise Multi-Agent Customer Operations Platform for B2B SaaS
 
 **Version:** 2.0
@@ -30,9 +30,9 @@
 
 ## 1.1 Purpose
 
-AgentOps AI is an enterprise-inspired multi-agent workflow platform designed to automate customer support operations for Business-to-Business (B2B) Software-as-a-Service (SaaS) companies.
+AgentFlow AI is an enterprise-inspired multi-agent workflow platform designed to automate customer support operations for Business-to-Business (B2B) Software-as-a-Service (SaaS) companies.
 
-Unlike traditional AI chatbots that generate responses directly from a Large Language Model (LLM), AgentOps AI decomposes customer requests into structured workflows executed by multiple specialised AI agents. Each agent is responsible for a specific business capability such as billing, customer account management, technical support, or policy validation.
+Unlike traditional AI chatbots that generate responses directly from a Large Language Model (LLM), AgentFlow AI decomposes customer requests into structured workflows executed by multiple specialised AI agents. Each agent is responsible for a specific business capability such as billing, customer account management, technical support, or policy validation.
 
 The platform combines deterministic workflow orchestration, Retrieval-Augmented Generation (RAG), Model Context Protocol (MCP), and Human-in-the-Loop (HITL) approvals to produce reliable, explainable, and enterprise-ready customer support resolutions.
 
@@ -99,7 +99,7 @@ Although modern LLMs can generate fluent responses, they cannot safely execute e
 
 # 1.3 Proposed Solution
 
-AgentOps AI introduces an enterprise-grade multi-agent architecture where specialised AI agents collaborate to resolve customer support requests.
+AgentFlow AI introduces an enterprise-grade multi-agent architecture where specialised AI agents collaborate to resolve customer support requests.
 
 Instead of relying on a single LLM, the platform follows a deterministic workflow:
 
@@ -502,7 +502,7 @@ Every action performed by the platform must be observable and auditable.
 
 ```
 
-agentops-ai/
+agentflow-ai/
 
 │
 
@@ -585,7 +585,7 @@ The following section (Part 2) will define:
 
 ## 11.1 System Overview
 
-AgentOps AI follows an event-driven, workflow-oriented architecture designed around deterministic orchestration rather than autonomous agents making uncontrolled decisions.
+AgentFlow AI follows an event-driven, workflow-oriented architecture designed around deterministic orchestration rather than autonomous agents making uncontrolled decisions.
 
 The platform separates:
 
@@ -2913,7 +2913,7 @@ Non-Recoverable
 # 47. Project Structure
 
 ```text
-agentops-ai/
+agentflow-ai/
 │
 ├── app/
 │   ├── agents/
