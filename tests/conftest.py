@@ -157,6 +157,24 @@ def fake_mcp_client_factory():
     return FakeMCPClient
 
 
+class FakeRetriever:
+    """KnowledgeRetriever stand-in returning scripted RetrievedChunk hits."""
+
+    def __init__(self, hits: list | None = None) -> None:
+        self.hits = list(hits or [])
+        self.calls: list[dict] = []
+
+    async def search(self, query, *, top_k=None, doc_types=None):
+        self.calls.append({"query": query, "top_k": top_k, "doc_types": doc_types})
+        return list(self.hits)
+
+
+@pytest.fixture
+def fake_retriever_factory():
+    """Return a builder for FakeRetriever instances."""
+    return FakeRetriever
+
+
 @pytest_asyncio.fixture
 async def db_engine():
     """Fresh in-memory SQLite database per test."""

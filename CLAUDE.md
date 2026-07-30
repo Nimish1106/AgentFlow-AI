@@ -61,7 +61,7 @@ Always provide:
 
 ## Repository status
 
-**Phases 1-4 of 8 are complete** (SRS §48).
+**Phases 1-5 of 8 are complete** (SRS §48).
 
 Phase 1 — project setup, PostgreSQL, Redis, FastAPI, Docker: `app/config` (Pydantic v2 settings), `app/database` (async SQLAlchemy 2.x session + async Redis), `app/models` (User, SupportTicket, Subscription, Invoice, WorkflowRun, AgentExecutionLog, AuditLog, enums), `app/services` (Ticket/Workflow/Queue + typed exceptions), `app/api/routes` (health, tickets, workflows), `app/observability/logging.py`, Alembic migration `0001_initial_schema`, `scripts/seed_database.py`, Docker Compose (postgres/redis/backend).
 
@@ -78,7 +78,9 @@ Phase 4 — the five agents + ToolNode (SRS §30, §31, §37): `app/graph/tools.
 
 Parallel-safety (bit us during Phase 4): domain agents run in one superstep, so any key they write must carry a reducer or LangGraph raises `InvalidUpdateError`. `completed_agents` and `tool_history` are now `Annotated[List, operator.add]`; `shared_context` is `Annotated[Dict, merge_dicts]` — nodes return **only their own contribution** (agents namespace output under their agent name), never a spread of prior state, or values double-append. Domain agent nodes may write only: `agent_results`, `errors`, `completed_agents`, `tool_history`, `shared_context`, `messages`. `current_node` is unreduced — only nodes that run alone in a superstep (supervisor, planner, policy, response) may write it.
 
-Not started — Phases 5-8: RAG/Qdrant (knowledge tools still return `insufficient_information`; Qdrant not yet in `requirements.txt` or Compose), Results Aggregator + Risk Engine + HITL interrupt + workflow resume (Postgres-backed checkpointer — today the graph compiles with `InMemorySaver`), the dispatcher that consumes the Redis queue and runs the graph (`POST /tickets` still only queues; the graph is **not wired into the API**), React frontend. The packages `app/rag` and `app/dispatcher` hold only empty `__init__.py` files; `frontend/` and `docs/` are empty.
+Phase 5 — RAG, Qdrant, knowledge ingestion (SRS §20, §32, §33): `app/rag/` — `chunking.py` (deterministic paragraph-aware `chunk_text`, sliding window with overlap for over-long paragraphs), `embeddings.py` (`FastEmbedModel` — fastembed/ONNX, lazy-loads on first `embed`, inference pushed to a worker thread; model name from `settings.embedding_model`, `BAAI/bge-small-en-v1.5`, 384 dims — ingestion and query must embed with the same model), `vector_store.py` (`KnowledgeVectorStore` over `AsyncQdrantClient`; **one** collection `knowledge`, doc kind is a `doc_type` payload field filtered with `MatchAny` — not separate collections; point ids are UUID5 of `source:chunk_index` so re-ingestion is an idempotent overwrite), `ingestion.py` (Markdown + minimal `--- title/doc_type ---` front matter → chunks → vectors → upsert), `retriever.py` (`KnowledgeRetriever` + cached `get_retriever()`), `schemas.py`. `KnowledgeService` now does real retrieval: `search_policy` filters doc_types `(refund_policy, sla, policy)`, `search_runbook` `(runbook, troubleshooting)`; zero hits (or all hits under `rag_score_threshold`, default 0.6 — bge cosine scores floor around 0.5 even for unrelated text, so a low threshold never triggers the guard; measured on the seed corpus relevant ≥0.7, nonsense ≤0.52) → the same `insufficient_information` payload as the Phase 3 stubs; retriever exceptions propagate so the MCP runtime audits them as failures — the service must never swallow errors into fake insufficient-info answers. Seed corpus in `docs/knowledge/*.md` (6 docs: refund_policy, sla, faq, product_doc, troubleshooting, runbook — a test asserts exactly this set); indexed **offline** via `docker compose exec backend python -m scripts.ingest_knowledge` (Dockerfile now `COPY docs ./docs`). Compose gained a `qdrant` service (v1.18.0 — keep the image minor version within 1 of the `qdrant-client` pin or the client warns on every connection; healthcheck via bash `/dev/tcp` because the image has no curl) and `QDRANT_URL` on backend + enterprise-mcp. The MCP knowledge tool contract did not change — agents still reach knowledge only through the MCP server, and the Technical agent still binds only `knowledge_semantic_search`. The Dockerfile pre-downloads the default model's weights at build time (`FASTEMBED_CACHE_PATH=/opt/fastembed_cache`) — without this the first knowledge call on a fresh container spends its entire 10s MCP timeout downloading weights and fails (observed live; the failure was audited and the retry policy would mask it, but cold start is guaranteed to time out). Overriding `EMBEDDING_MODEL` at runtime works but re-downloads on first embed. Audit note: `audit_logs.workflow_id` has an FK to `workflow_runs` in Postgres — a tool call with a fabricated workflow_id gets its audit row silently dropped (`_audit` logs and swallows insert failures by design); always smoke-test with a workflow_id created via `POST /tickets`.
+
+Not started — Phases 6-8: Results Aggregator + Risk Engine + HITL interrupt + workflow resume (Postgres-backed checkpointer — today the graph compiles with `InMemorySaver`), the dispatcher that consumes the Redis queue and runs the graph (`POST /tickets` still only queues; the graph is **not wired into the API**), React frontend. The package `app/dispatcher` holds only an empty `__init__.py`; `frontend/` is empty.
 
 `srs.md` is the authoritative contract. **Read it before writing any code** — specifically Section 16 (Architectural Constraints) and Section 46 (AI Coding Rules). When scaffolding new code, follow the folder layout in Section 47 rather than inventing one.
 
@@ -125,15 +127,16 @@ Retry only recoverable failures (MCP timeout, DB connection, vector-search timeo
 ## Commands
 
 ```bash
-docker compose up --build                              # postgres, redis, backend, enterprise-mcp (migrations run on boot)
+docker compose up --build                              # postgres, redis, qdrant, backend, enterprise-mcp (migrations run on boot)
 docker compose exec backend python -m scripts.seed_database
+docker compose exec backend python -m scripts.ingest_knowledge   # index docs/knowledge into Qdrant (offline, idempotent)
 pytest                                                 # target >=80% coverage; run from the local venv
 alembic upgrade head                                   # local venv only
 ```
 
 Note that `pytest` runs from the local venv, not inside the backend container — the container image does not ship the `tests/` directory, so `docker compose exec backend pytest` collects nothing.
 
-Services share a custom Docker bridge network. The backend reaches MCP at `http://enterprise-mcp:8000` (host port 8001). Later phases add qdrant and frontend to Compose.
+Services share a custom Docker bridge network. The backend reaches MCP at `http://enterprise-mcp:8000` (host port 8001) and Qdrant at `http://qdrant:6333` (host port 6333). Phase 7 adds the frontend to Compose.
 
 To smoke-test MCP against the running stack:
 

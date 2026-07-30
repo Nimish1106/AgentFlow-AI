@@ -8,10 +8,17 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-download the default embedding model (SRS §32) so the first knowledge
+# tool call does not spend its 10s MCP timeout downloading weights. Changing
+# EMBEDDING_MODEL at runtime still works but re-downloads on first embed.
+ENV FASTEMBED_CACHE_PATH=/opt/fastembed_cache
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"
+
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini .
 COPY scripts ./scripts
+COPY docs ./docs
 
 EXPOSE 8000
 

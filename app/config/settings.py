@@ -31,6 +31,21 @@ class Settings(BaseSettings):
     mcp_retry_max_attempts: int = 3
     mcp_retry_backoff_seconds: float = 0.5
 
+    # RAG / Qdrant (SRS §8, §20, §32, §33). The embedding model is configurable
+    # per SRS §46; both sides of the pipeline (ingestion + retrieval) read it
+    # from here so indexed vectors and query vectors always match.
+    qdrant_url: str = "http://localhost:6333"
+    qdrant_collection: str = "knowledge"
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
+    embedding_dimensions: int = 384
+    rag_top_k: int = 5
+    # bge cosine scores have a high floor (~0.5 even for unrelated text);
+    # measured on the seed corpus: relevant hits score >=0.7, nonsense <=0.52.
+    rag_score_threshold: float = 0.6
+    knowledge_docs_dir: str = "docs/knowledge"
+    chunk_size: int = 1200
+    chunk_overlap: int = 200
+
     # LLM (SRS §8: Groq). Agents never read env vars directly (SRS §46) - they
     # receive an LLM built from these settings.
     groq_api_key: str = ""

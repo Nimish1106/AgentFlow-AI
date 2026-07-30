@@ -176,8 +176,13 @@ async def test_ticket_update_and_note(mcp_server, mcp_session_factory):
 
 
 async def test_knowledge_tools_report_insufficient_information(
-    mcp_server, mcp_session_factory
+    mcp_server, mcp_session_factory, monkeypatch, fake_retriever_factory
 ):
+    import app.services.knowledge_service as knowledge_service
+
+    retriever = fake_retriever_factory(hits=[])
+    monkeypatch.setattr(knowledge_service, "get_retriever", lambda: retriever)
+
     async with create_connected_server_and_client_session(mcp_server) as client:
         for tool in (
             "knowledge_semantic_search",
@@ -187,6 +192,42 @@ async def test_knowledge_tools_report_insufficient_information(
             payload = _payload(await client.call_tool(tool, {"query": "refunds"}))
             assert payload["status"] == "insufficient_information"
             assert payload["results"] == []
+
+
+async def test_knowledge_search_returns_grounded_results_with_citations(
+    mcp_server, mcp_session_factory, monkeypatch, fake_retriever_factory
+):
+    from app.rag.schemas import RetrievedChunk
+
+    import app.services.knowledge_service as knowledge_service
+
+    retriever = fake_retriever_factory(
+        hits=[
+            RetrievedChunk(
+                text="Duplicate charges are refunded in full.",
+                source="refund-policy.md",
+                title="Refund Policy",
+                doc_type="refund_policy",
+                score=0.82,
+            )
+        ]
+    )
+    monkeypatch.setattr(knowledge_service, "get_retriever", lambda: retriever)
+
+    async with create_connected_server_and_client_session(mcp_server) as client:
+        payload = _payload(
+            await client.call_tool(
+                "knowledge_semantic_search", {"query": "duplicate charge refund"}
+            )
+        )
+    assert payload["status"] == "ok"
+    [citation] = payload["results"]
+    assert citation["source"] == "refund-policy.md"
+    assert citation["score"] == 0.82
+
+    audits = await _audit_rows(mcp_session_factory)
+    assert len(audits) == 1
+    assert json.loads(audits[0].action)["status"] == "success"
 
 
 async def test_not_found_returns_structured_error_and_audits_failure(
