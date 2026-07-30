@@ -61,11 +61,13 @@ Always provide:
 
 ## Repository status
 
-**Phase 1 of 8 is complete** (SRS §48): project setup, PostgreSQL, Redis, FastAPI, Docker.
+**Phases 1-2 of 8 are complete** (SRS §48).
 
-In place: `app/config` (Pydantic v2 settings), `app/database` (async SQLAlchemy 2.x session + async Redis), `app/models` (User, SupportTicket, Subscription, Invoice, WorkflowRun, AgentExecutionLog, AuditLog, enums), `app/services` (Ticket/Workflow/Queue + typed exceptions), `app/api/routes` (health, tickets, workflows), `app/observability/logging.py`, Alembic migration `0001_initial_schema`, `scripts/seed_database.py`, Docker Compose (postgres/redis/backend), and a passing pytest suite.
+Phase 1 — project setup, PostgreSQL, Redis, FastAPI, Docker: `app/config` (Pydantic v2 settings), `app/database` (async SQLAlchemy 2.x session + async Redis), `app/models` (User, SupportTicket, Subscription, Invoice, WorkflowRun, AgentExecutionLog, AuditLog, enums), `app/services` (Ticket/Workflow/Queue + typed exceptions), `app/api/routes` (health, tickets, workflows), `app/observability/logging.py`, Alembic migration `0001_initial_schema`, `scripts/seed_database.py`, Docker Compose (postgres/redis/backend).
 
-Not started — Phases 2-8: LangGraph + GraphState + Supervisor + Task Planner, Enterprise MCP server and tools, the six agents, RAG/Qdrant, Results Aggregator + Risk Engine + HITL, React frontend. The packages `app/agents`, `app/graph`, `app/mcp`, `app/rag`, `app/dispatcher`, `app/prompts` exist but hold only empty `__init__.py` files; `frontend/` and `docs/` are empty. LangGraph, Groq, Qdrant, and the MCP SDK are not yet in `requirements.txt`.
+Phase 2 — LangGraph, GraphState, Supervisor, Task Planner: `app/graph/state.py` (GraphState/ExecutionTask/AgentResult + `build_initial_state`), `app/graph/constants.py` (Domain/AgentName), `app/graph/planner.py` (deterministic plan builder), `app/graph/llm.py` (Groq factory — the only place credentials are read), `app/graph/nodes/` (supervisor, planner), `app/graph/workflow.py` (`START -> supervisor -> task_planner -> END`), `app/prompts/supervisor.py`. The graph is **not yet wired into the API** — `POST /tickets` still only queues; the dispatcher that consumes the queue and runs the graph is a later phase.
+
+Not started — Phases 3-8: Enterprise MCP server and tools, the six agents, RAG/Qdrant, Results Aggregator + Risk Engine + HITL, React frontend. The packages `app/agents`, `app/mcp`, `app/rag`, `app/dispatcher` hold only empty `__init__.py` files; `frontend/` and `docs/` are empty. Qdrant and the MCP SDK are not yet in `requirements.txt`. Checkpointing uses an in-memory saver; the Postgres-backed checkpointer arrives with workflow resume in Phase 6.
 
 `srs.md` is the authoritative contract. **Read it before writing any code** — specifically Section 16 (Architectural Constraints) and Section 46 (AI Coding Rules). When scaffolding new code, follow the folder layout in Section 47 rather than inventing one.
 

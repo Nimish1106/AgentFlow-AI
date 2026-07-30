@@ -1,5 +1,6 @@
-"""Shared test fixtures: in-memory SQLite DB and a fake Redis client."""
+"""Shared test fixtures: in-memory SQLite DB, fake Redis client, fake LLM."""
 
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -24,6 +25,36 @@ class FakeRedis:
 
     async def ping(self) -> bool:
         return True
+
+
+class FakeStructuredLLM:
+    """Chat-model stand-in for nodes that use ``with_structured_output``.
+
+    Only the surface the Supervisor touches is implemented: ``with_structured_output``
+    returning something awaitable via ``ainvoke``. Set ``raises`` to simulate an
+    LLM failure.
+    """
+
+    def __init__(self, result=None, raises: Exception | None = None) -> None:
+        self.result = result
+        self.raises = raises
+        self.calls: list = []
+
+    def with_structured_output(self, schema, **kwargs):  # noqa: ARG002
+        self.schema = schema
+        return self
+
+    async def ainvoke(self, messages, **kwargs):  # noqa: ARG002
+        self.calls.append(messages)
+        if self.raises is not None:
+            raise self.raises
+        return self.result
+
+
+@pytest.fixture
+def fake_llm_factory():
+    """Return a builder for FakeStructuredLLM instances."""
+    return FakeStructuredLLM
 
 
 @pytest_asyncio.fixture

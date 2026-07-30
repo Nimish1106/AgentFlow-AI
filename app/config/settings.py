@@ -22,6 +22,13 @@ class Settings(BaseSettings):
 
     estimated_wait_time_seconds: int = 30
 
+    # LLM (SRS §8: Groq). Agents never read env vars directly (SRS §46) - they
+    # receive an LLM built from these settings.
+    groq_api_key: str = ""
+    groq_model: str = "llama-3.3-70b-versatile"
+    llm_temperature: float = 0.0
+    llm_max_retries: int = 3
+
 
 @lru_cache
 def get_settings() -> Settings:

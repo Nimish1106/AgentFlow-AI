@@ -3,8 +3,19 @@
 Enterprise Multi-Agent Customer Operations Platform for B2B SaaS.
 `srs.md` is the authoritative specification.
 
-**Status: Phase 1 complete** (project setup, PostgreSQL, Redis, FastAPI, Docker).
-Later phases (LangGraph, MCP, agents, RAG, HITL, frontend) are not implemented yet.
+**Status: Phases 1-2 complete.**
+
+- Phase 1 — project setup, PostgreSQL, Redis, FastAPI, Docker.
+- Phase 2 — LangGraph state, deterministic Task Planner, Supervisor Agent, base workflow graph.
+
+Later phases (MCP, the domain agents, RAG, HITL, frontend) are not implemented yet.
+The graph is not yet wired into `POST /tickets` — that arrives with the queue dispatcher.
+
+## Configuration
+
+Copy `.env.example` to `.env`. Set `GROQ_API_KEY` before running the workflow
+graph — the Supervisor Agent raises `LLMNotConfiguredError` without it. The API,
+database and queue all run fine without a key.
 
 ## Quickstart (Docker)
 
@@ -38,4 +49,7 @@ uvicorn app.main:app --reload
 
 ```bash
 pytest
+pytest --cov=app --cov-report=term-missing   # target >=80%
 ```
+
+Tests need no Groq key — the Supervisor is exercised against a fake chat model.
