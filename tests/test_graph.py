@@ -8,7 +8,11 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph
 
 from app.graph.constants import AgentName, Domain
+from app.graph.nodes.aggregator import NODE_NAME as AGGREGATOR_NODE
+from app.graph.nodes.dispatcher import NODE_NAME as DISPATCHER_NODE
+from app.graph.nodes.hitl import NODE_NAME as HITL_NODE
 from app.graph.nodes.planner import NODE_NAME as PLANNER_NODE
+from app.graph.nodes.risk_engine import NODE_NAME as RISK_NODE
 from app.graph.nodes.supervisor import (
     NODE_NAME as SUPERVISOR_NODE,
 )
@@ -21,6 +25,8 @@ from app.graph.workflow import (
     build_workflow_graph,
     route_after_planner,
     route_after_policy,
+    route_after_response,
+    route_after_risk,
     route_after_supervisor,
 )
 
@@ -307,9 +313,23 @@ class TestRouting:
     def test_failed_policy_routes_to_end(self):
         assert route_after_policy(initial_state(workflow_status="failed")) == END
 
-    def test_successful_policy_routes_to_response(self):
+    def test_successful_policy_routes_to_the_aggregator(self):
         state = initial_state(workflow_status="running")
-        assert route_after_policy(state) == AgentName.RESPONSE.value
+        assert route_after_policy(state) == AGGREGATOR_NODE
+
+    def test_risk_requiring_hitl_routes_to_human_approval(self):
+        assert route_after_risk(initial_state(requires_hitl=True)) == HITL_NODE
+
+    def test_low_risk_skips_human_approval(self):
+        state = initial_state(requires_hitl=False)
+        assert route_after_risk(state) == AgentName.RESPONSE.value
+
+    def test_response_routes_to_the_dispatcher(self):
+        state = initial_state(workflow_status="running")
+        assert route_after_response(state) == DISPATCHER_NODE
+
+    def test_failed_response_skips_delivery(self):
+        assert route_after_response(initial_state(workflow_status="failed")) == END
 
 
 class TestBaseGraph:
@@ -362,6 +382,12 @@ class TestBaseGraph:
             AgentName.RESPONSE,
         ):
             assert agent.value in nodes
+
+    def test_compiled_graph_exposes_every_governance_node(self):
+        """SRS §37: aggregator, risk engine, HITL and dispatcher are all nodes."""
+        nodes = build_workflow_graph().get_graph().nodes
+        for node in (AGGREGATOR_NODE, RISK_NODE, HITL_NODE, DISPATCHER_NODE):
+            assert node in nodes
 
     async def test_end_to_end_run_produces_an_execution_plan(
         self, full_llm, fake_mcp_client_factory

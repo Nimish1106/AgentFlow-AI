@@ -46,6 +46,20 @@ class Settings(BaseSettings):
     chunk_size: int = 1200
     chunk_overlap: int = 200
 
+    # Risk Engine + HITL governance (SRS §38, §39)
+    hitl_refund_threshold: float = 1000.0
+    hitl_confidence_threshold: float = 0.6
+
+    # Queue dispatcher (SRS §14: FastAPI queues jobs; the dispatcher runs them)
+    dispatcher_consumer_group: str = "agentflow-dispatcher"
+    dispatcher_consumer_name: str = "dispatcher-1"
+    dispatcher_block_ms: int = 5000
+    # Optional webhook the graph Dispatcher node POSTs the final response to.
+    # Empty = webhook delivery disabled (SRS §13 step 14: a failed webhook
+    # logs and continues - it never crashes the workflow).
+    dispatch_webhook_url: str = ""
+    dispatch_webhook_timeout_seconds: float = 5.0
+
     # LLM (SRS §8: Groq). Agents never read env vars directly (SRS §46) - they
     # receive an LLM built from these settings.
     groq_api_key: str = ""

@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from app.api.routes import health, tickets, workflows
+from app.api.routes import approvals, health, tickets, workflows
 from app.config.settings import get_settings
 from app.database.redis import close_redis_pool
 from app.database.session import engine
@@ -35,6 +35,7 @@ app = FastAPI(
 app.include_router(health.router)
 app.include_router(tickets.router)
 app.include_router(workflows.router)
+app.include_router(approvals.router)
 
 
 @app.exception_handler(Exception)

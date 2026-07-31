@@ -38,6 +38,26 @@ class WorkflowStatusResponse(BaseModel):
     requires_hitl: bool
 
 
+class ApprovalRequest(BaseModel):
+    """HITL approval decision (SRS §26, §36 POST /approvals/{workflow_id})."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    approved: bool
+    reviewer_name: str = Field(min_length=1, max_length=255)
+    comments: str = ""
+
+
+class ApprovalResponse(BaseModel):
+    """Acknowledgement that a paused workflow was queued for resume."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    workflow_id: uuid.UUID
+    approval_status: str
+    workflow_status: str
+
+
 class TicketDetailResponse(BaseModel):
     """Ticket details plus its latest workflow (SRS §36 GET /tickets/{id})."""
 
@@ -50,6 +70,7 @@ class TicketDetailResponse(BaseModel):
     priority: str
     status: str
     created_at: datetime
+    resolution: str | None = None
     workflow_id: uuid.UUID | None = None
     workflow_status: str | None = None
 

@@ -1,8 +1,13 @@
 """Response Agent (SRS §30.7): generate the customer-facing resolution.
 
 Rules: uses ONLY GraphState and AgentResults - never calls MCP, never queries
-databases (SRS §34 forbids Response Agent -> MCP). It is the last agent node,
-so it may write unreduced keys (``final_response``, ``workflow_status``).
+databases (SRS §34 forbids Response Agent -> MCP). It runs alone in its
+superstep, so it may write unreduced keys (``final_response``,
+``workflow_status``).
+
+The Dispatcher node runs after this one and owns the terminal
+``workflow_status="completed"`` transition (SRS §37) - a response that was
+drafted but never delivered is not a completed workflow.
 """
 
 import logging
@@ -97,7 +102,6 @@ def make_response_agent_node(
             "agent_results": [result],
             "completed_agents": [NODE_NAME],
             "final_response": outcome.customer_response,
-            "workflow_status": "completed",
             "messages": [AIMessage(content=outcome.customer_response)],
         }
 

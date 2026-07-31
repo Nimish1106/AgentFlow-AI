@@ -15,6 +15,11 @@ langchain-core>=1.0,<2.0
 langchain-groq>=1.1,<2.0
 groq>=0.30
 
+# Postgres-backed LangGraph checkpointer (SRS §16.9: workflows are resumable).
+# The saver uses psycopg (v3), separate from the app's asyncpg engine.
+langgraph-checkpoint-postgres>=3.1,<4.0
+psycopg[binary,pool]>=3.2,<4.0
+
 # Enterprise MCP Server + client (SRS §31)
 mcp>=1.29,<2.0
 

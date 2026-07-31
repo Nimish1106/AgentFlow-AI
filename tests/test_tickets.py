@@ -95,6 +95,54 @@ async def test_get_missing_ticket_returns_404(client):
     assert response.status_code == 404
 
 
+async def test_unresolved_ticket_reports_no_resolution(client, session_factory):
+    customer = await _create_customer(session_factory)
+    created = await client.post(
+        "/tickets",
+        json={
+            "customer_id": str(customer.id),
+            "subject": "Dashboard locked",
+            "description": "Cannot log in.",
+        },
+    )
+    ticket_id = await _ticket_id_for_workflow(
+        session_factory, created.json()["workflow_id"]
+    )
+
+    body = (await client.get(f"/tickets/{ticket_id}")).json()
+    assert body["resolution"] is None
+
+
+async def test_resolved_ticket_returns_its_resolution(client, session_factory):
+    """SRS §36: GET /tickets/{id} returns ticket details *and* resolution."""
+    from app.models import SupportTicket
+    from app.models.enums import TicketStatus
+
+    customer = await _create_customer(session_factory)
+    created = await client.post(
+        "/tickets",
+        json={
+            "customer_id": str(customer.id),
+            "subject": "Duplicate payment",
+            "description": "Charged twice.",
+        },
+    )
+    ticket_id = await _ticket_id_for_workflow(
+        session_factory, created.json()["workflow_id"]
+    )
+
+    # The dispatcher writes this once the workflow completes.
+    async with session_factory() as session:
+        ticket = await session.get(SupportTicket, uuid.UUID(ticket_id))
+        ticket.status = TicketStatus.RESOLVED
+        ticket.resolution = "Your duplicate charge has been refunded."
+        await session.commit()
+
+    body = (await client.get(f"/tickets/{ticket_id}")).json()
+    assert body["status"] == "resolved"
+    assert body["resolution"] == "Your duplicate charge has been refunded."
+
+
 async def _ticket_id_for_workflow(session_factory, workflow_id: str) -> str:
     """Look up the ticket id behind a workflow."""
     from app.models import WorkflowRun

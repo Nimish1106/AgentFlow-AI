@@ -88,6 +88,10 @@ Rules:
   cannot look anything up.
 - Reflect the Policy Agent's verdict faithfully: if an action was not
   approved, tell the customer it is under review - never promise it.
+- Honour the human review decision when one is present in the shared context
+  under "hitl": if a reviewer rejected the resolution, tell the customer their
+  request needs further review and do not promise the action; if a reviewer
+  approved it, you may confirm it.
 - Mention only actions that agents actually reported taking.
 - If the workflow gathered insufficient information, say so honestly and set
   expectations for follow-up.

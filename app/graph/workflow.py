@@ -1,14 +1,16 @@
 """LangGraph workflow assembly (SRS §37).
 
-Phase 4 wires the full agent pipeline::
+Phase 6 completes the topology::
 
     START -> supervisor -> task_planner
           -> [billing | account | technical]   (parallel, plan-driven)
-          -> policy -> response -> END
+          -> policy -> results_aggregator -> risk_engine
+          -> human_approval (only when risk demands it)
+          -> response -> dispatcher -> END
 
-The Results Aggregator, Risk Engine, HITL interrupt and Dispatcher nodes are
-Phase 6; until then the Policy Agent's verdict and risk land in GraphState and
-the Response Agent always runs after policy succeeds.
+The Aggregator, Risk Engine and Dispatcher are deterministic Python (no LLM, no
+MCP). ``human_approval`` interrupts the run; ``POST /approvals/{workflow_id}``
+resumes the same thread, keyed by ``workflow_id`` as ``thread_id`` (SRS §38).
 """
 
 import logging
@@ -27,8 +29,16 @@ from app.agents.response import NODE_NAME as RESPONSE_NODE
 from app.agents.response import make_response_agent_node
 from app.agents.technical import make_technical_agent_node
 from app.graph.constants import AgentName
+from app.graph.nodes.aggregator import NODE_NAME as AGGREGATOR_NODE
+from app.graph.nodes.aggregator import aggregator_node
+from app.graph.nodes.dispatcher import NODE_NAME as DISPATCHER_NODE
+from app.graph.nodes.dispatcher import dispatcher_node
+from app.graph.nodes.hitl import NODE_NAME as HITL_NODE
+from app.graph.nodes.hitl import hitl_node
 from app.graph.nodes.planner import NODE_NAME as PLANNER_NODE
 from app.graph.nodes.planner import planner_node
+from app.graph.nodes.risk_engine import NODE_NAME as RISK_NODE
+from app.graph.nodes.risk_engine import risk_engine_node
 from app.graph.nodes.supervisor import NODE_NAME as SUPERVISOR_NODE
 from app.graph.nodes.supervisor import make_supervisor_node, supervisor_node
 from app.graph.state import GraphState
@@ -71,16 +81,31 @@ def route_after_planner(state: GraphState) -> List[str]:
     return targets or [POLICY_NODE]
 
 
-def route_after_policy(state: GraphState) -> Literal["response_agent", "__end__"]:
-    """Stop before drafting a reply when the policy gate itself failed.
+def route_after_policy(state: GraphState) -> Literal["results_aggregator", "__end__"]:
+    """Stop before aggregating when the policy gate itself failed.
 
-    A policy *rejection* (approved=False) still reaches the Response Agent -
-    the customer is told the request is under review. Only a failed evaluation
-    (no verdict at all) ends the workflow (SRS §35).
+    A policy *rejection* (approved=False) still continues - the Risk Engine will
+    route it to human review and the customer is told the request is under
+    review. Only a failed evaluation (no verdict at all) ends the workflow
+    (SRS §35).
     """
     if state.get("workflow_status") == "failed":
         return END
+    return AGGREGATOR_NODE
+
+
+def route_after_risk(state: GraphState) -> Literal["human_approval", "response_agent"]:
+    """Send risky workflows to a human before any customer-facing reply (SRS §38)."""
+    if state.get("requires_hitl"):
+        return HITL_NODE
     return RESPONSE_NODE
+
+
+def route_after_response(state: GraphState) -> Literal["dispatcher", "__end__"]:
+    """Skip delivery when no response was produced (SRS §35)."""
+    if state.get("workflow_status") == "failed":
+        return END
+    return DISPATCHER_NODE
 
 
 def build_workflow_graph(
@@ -98,8 +123,10 @@ def build_workflow_graph(
         mcp_client: Enterprise MCP client used by the domain agents' ToolNodes.
             Defaults to the configured client, resolved lazily so the graph
             compiles without a running MCP server.
-        checkpointer: Checkpoint backend. Defaults to an in-memory saver; the
-            Postgres-backed saver arrives with workflow resume in Phase 6.
+        checkpointer: Checkpoint backend. Defaults to an in-memory saver, which
+            is enough for tests and single-process runs; the dispatcher passes
+            the Postgres saver so interrupted workflows survive a restart
+            (``app.graph.checkpointer.checkpointer_context``).
 
     Returns:
         The compiled graph, ready for ``ainvoke``.
@@ -124,7 +151,11 @@ def build_workflow_graph(
         make_technical_agent_node(llm=llm, mcp_client=mcp_client),
     )
     graph.add_node(POLICY_NODE, make_policy_agent_node(llm=llm))
+    graph.add_node(AGGREGATOR_NODE, aggregator_node)
+    graph.add_node(RISK_NODE, risk_engine_node)
+    graph.add_node(HITL_NODE, hitl_node)
     graph.add_node(RESPONSE_NODE, make_response_agent_node(llm=llm))
+    graph.add_node(DISPATCHER_NODE, dispatcher_node)
 
     graph.add_edge(START, SUPERVISOR_NODE)
     graph.add_conditional_edges(
@@ -142,9 +173,21 @@ def build_workflow_graph(
     graph.add_conditional_edges(
         POLICY_NODE,
         route_after_policy,
-        {RESPONSE_NODE: RESPONSE_NODE, END: END},
+        {AGGREGATOR_NODE: AGGREGATOR_NODE, END: END},
     )
-    graph.add_edge(RESPONSE_NODE, END)
+    graph.add_edge(AGGREGATOR_NODE, RISK_NODE)
+    graph.add_conditional_edges(
+        RISK_NODE,
+        route_after_risk,
+        {HITL_NODE: HITL_NODE, RESPONSE_NODE: RESPONSE_NODE},
+    )
+    graph.add_edge(HITL_NODE, RESPONSE_NODE)
+    graph.add_conditional_edges(
+        RESPONSE_NODE,
+        route_after_response,
+        {DISPATCHER_NODE: DISPATCHER_NODE, END: END},
+    )
+    graph.add_edge(DISPATCHER_NODE, END)
 
     # Checkpoint after every node (SRS §46) so a run is resumable.
     return graph.compile(checkpointer=checkpointer or InMemorySaver())

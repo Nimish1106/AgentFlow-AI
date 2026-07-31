@@ -31,6 +31,9 @@ class SupportTicket(Base):
         default=TicketStatus.OPEN,
         nullable=False,
     )
+    #: Customer-facing resolution written by the workflow once it completes
+    #: (SRS §36 GET /tickets/{id} returns ticket details *and* resolution).
+    resolution: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

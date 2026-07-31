@@ -54,6 +54,7 @@ async def get_ticket(
         priority=ticket.priority.value,
         status=ticket.status.value,
         created_at=ticket.created_at,
+        resolution=ticket.resolution,
         workflow_id=workflow.workflow_id if workflow else None,
         workflow_status=workflow.workflow_status.value if workflow else None,
     )

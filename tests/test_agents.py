@@ -349,7 +349,9 @@ class TestResponseAgent:
         update = await make_response_agent_node(llm=llm)(initial_state())
 
         assert update["final_response"].startswith("Hi Alice")
-        assert update["workflow_status"] == "completed"
+        # The Dispatcher node owns the terminal "completed" transition (SRS §37):
+        # a drafted-but-undelivered response is not a completed workflow.
+        assert "workflow_status" not in update
         result = update["agent_results"][0]
         assert set(result) == AGENT_RESULT_KEYS
         assert result["output_data"]["internal_note"]

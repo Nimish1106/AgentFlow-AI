@@ -88,6 +88,35 @@ services:
     networks:
       - agentflow-network
 
+  dispatcher:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    # Consumes the Redis workflow stream and executes the LangGraph workflow
+    # (SRS §14). Kept out of the API process so a long run never blocks HTTP.
+    command: python -m app.dispatcher.main
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-agentflow}:${POSTGRES_PASSWORD:-agentflow}@postgres:5432/${POSTGRES_DB:-agentflow}
+      REDIS_URL: redis://redis:6379/0
+      MCP_SERVER_URL: http://enterprise-mcp:8000
+      QDRANT_URL: http://qdrant:6333
+      # The dispatcher is the only service that calls the LLM.
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      backend:
+        # Backend runs `alembic upgrade head` on boot; wait so the schema exists.
+        condition: service_started
+      enterprise-mcp:
+        condition: service_started
+    networks:
+      - agentflow-network
+
 networks:
   agentflow-network:
     driver: bridge
