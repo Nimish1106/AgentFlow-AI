@@ -29,6 +29,7 @@ from app.agents.response import NODE_NAME as RESPONSE_NODE
 from app.agents.response import make_response_agent_node
 from app.agents.technical import make_technical_agent_node
 from app.graph.constants import AgentName
+from app.graph.instrumentation import traced_node
 from app.graph.nodes.aggregator import NODE_NAME as AGGREGATOR_NODE
 from app.graph.nodes.aggregator import aggregator_node
 from app.graph.nodes.dispatcher import NODE_NAME as DISPATCHER_NODE
@@ -133,29 +134,34 @@ def build_workflow_graph(
     """
     graph = StateGraph(GraphState)
 
-    graph.add_node(
+    # Every node goes through `add` so it is traced identically (SRS §42) and a
+    # new node cannot be registered untraced by accident.
+    def add(name: str, node_fn) -> None:
+        graph.add_node(name, traced_node(name, node_fn))
+
+    add(
         SUPERVISOR_NODE,
         make_supervisor_node(llm) if llm is not None else supervisor_node,
     )
-    graph.add_node(PLANNER_NODE, planner_node)
-    graph.add_node(
+    add(PLANNER_NODE, planner_node)
+    add(
         AgentName.BILLING.value,
         make_billing_agent_node(llm=llm, mcp_client=mcp_client),
     )
-    graph.add_node(
+    add(
         AgentName.ACCOUNT.value,
         make_account_agent_node(llm=llm, mcp_client=mcp_client),
     )
-    graph.add_node(
+    add(
         AgentName.TECHNICAL.value,
         make_technical_agent_node(llm=llm, mcp_client=mcp_client),
     )
-    graph.add_node(POLICY_NODE, make_policy_agent_node(llm=llm))
-    graph.add_node(AGGREGATOR_NODE, aggregator_node)
-    graph.add_node(RISK_NODE, risk_engine_node)
-    graph.add_node(HITL_NODE, hitl_node)
-    graph.add_node(RESPONSE_NODE, make_response_agent_node(llm=llm))
-    graph.add_node(DISPATCHER_NODE, dispatcher_node)
+    add(POLICY_NODE, make_policy_agent_node(llm=llm))
+    add(AGGREGATOR_NODE, aggregator_node)
+    add(RISK_NODE, risk_engine_node)
+    add(HITL_NODE, hitl_node)
+    add(RESPONSE_NODE, make_response_agent_node(llm=llm))
+    add(DISPATCHER_NODE, dispatcher_node)
 
     graph.add_edge(START, SUPERVISOR_NODE)
     graph.add_conditional_edges(

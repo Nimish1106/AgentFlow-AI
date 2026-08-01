@@ -443,6 +443,110 @@ class TestMetrics:
         }
 
 
+class TestNoRowFanOut:
+    """One ticket must always be one row.
+
+    Both the tier and the latest-workflow lookups join tables that can hold
+    several rows per ticket. A plain join fans the ticket out into duplicates
+    and desynchronises it from ``total``, which the dashboard paginates on.
+    """
+
+    async def test_two_subscriptions_do_not_duplicate_a_ticket(
+        self, client, session_factory
+    ):
+        """A customer with an upgrade history holds more than one subscription."""
+        async with session_factory() as session:
+            customer = User(
+                company_name="Upgrade Corp",
+                full_name="Sam Example",
+                email=f"sam-{uuid.uuid4().hex[:8]}@upgrade.test",
+            )
+            session.add(customer)
+            await session.flush()
+            for plan in (SubscriptionPlan.BASIC, SubscriptionPlan.ENTERPRISE):
+                session.add(
+                    Subscription(
+                        user_id=customer.id,
+                        plan=plan,
+                        monthly_price=49,
+                        renewal_date=date(2027, 1, 1),
+                    )
+                )
+            session.add(
+                SupportTicket(
+                    customer_id=customer.id, title="Only once", description="x"
+                )
+            )
+            await session.commit()
+
+        body = (await client.get("/tickets")).json()
+        assert len(body["items"]) == 1
+        assert body["total"] == 1
+
+    async def test_a_retried_ticket_does_not_duplicate(
+        self, client, session_factory
+    ):
+        """Two runs written in one transaction share ``now()`` exactly.
+
+        Postgres' ``now()`` is transaction-scoped, so a MAX(started_at) join
+        matches both rows and emits the ticket twice.
+        """
+        async with session_factory() as session:
+            customer = User(
+                company_name="Retry Ltd",
+                full_name="Rae Example",
+                email=f"rae-{uuid.uuid4().hex[:8]}@retry.test",
+            )
+            session.add(customer)
+            await session.flush()
+            ticket = SupportTicket(
+                customer_id=customer.id, title="Retried", description="x"
+            )
+            session.add(ticket)
+            await session.flush()
+            session.add(WorkflowRun(ticket_id=ticket.id))
+            session.add(WorkflowRun(ticket_id=ticket.id))
+            await session.commit()
+
+        body = (await client.get("/tickets")).json()
+        assert len(body["items"]) == 1
+        assert body["total"] == 1
+        assert body["items"][0]["workflow_id"] is not None
+
+    async def test_the_page_never_exceeds_its_limit(self, client, session_factory):
+        """Fan-out would silently overflow a page and break pagination."""
+        async with session_factory() as session:
+            customer = User(
+                company_name="Busy Corp",
+                full_name="Bea Example",
+                email=f"bea-{uuid.uuid4().hex[:8]}@busy.test",
+            )
+            session.add(customer)
+            await session.flush()
+            for plan in (SubscriptionPlan.BASIC, SubscriptionPlan.PREMIUM):
+                session.add(
+                    Subscription(
+                        user_id=customer.id,
+                        plan=plan,
+                        monthly_price=49,
+                        renewal_date=date(2027, 1, 1),
+                    )
+                )
+            for index in range(4):
+                session.add(
+                    SupportTicket(
+                        customer_id=customer.id,
+                        title=f"Ticket {index}",
+                        description="x",
+                    )
+                )
+            await session.commit()
+
+        body = (await client.get("/tickets", params={"limit": 2})).json()
+        assert len(body["items"]) == 2
+        assert body["total"] == 4
+
+
 class TestReadOnly:
     async def test_dashboard_endpoints_never_run_the_graph(
         self, client, dashboard_data, monkeypatch

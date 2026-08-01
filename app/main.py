@@ -12,14 +12,18 @@ from app.config.settings import get_settings
 from app.database.redis import close_redis_pool
 from app.database.session import engine
 from app.observability.logging import configure_logging
+from app.observability.tracing import configure_tracing
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Configure logging on startup; release connections on shutdown."""
+    """Configure logging and tracing on startup; release connections on shutdown."""
     configure_logging()
+    # Instruments this app's request handling (SRS §42). A no-op unless
+    # OTEL_ENABLED is set, so no collector is required to run the API.
+    configure_tracing(app)
     logger.info("%s starting", get_settings().app_name)
     yield
     await close_redis_pool()

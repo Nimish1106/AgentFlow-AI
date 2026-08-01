@@ -9,6 +9,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from app.mcp.server.tools import account, billing, knowledge, ticket
 from app.observability.logging import configure_logging
+from app.observability.tracing import configure_tracing
 
 
 def create_mcp_server() -> FastMCP:
@@ -40,5 +41,7 @@ def create_mcp_server() -> FastMCP:
 
 
 configure_logging()
+# Tool-call spans (SRS §42); a no-op unless OTEL_ENABLED is set.
+configure_tracing()
 mcp_server = create_mcp_server()
 app = mcp_server.streamable_http_app()

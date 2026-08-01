@@ -64,20 +64,18 @@ class DashboardService:
         offset: int = 0,
         status: Optional[TicketStatus] = None,
     ) -> Tuple[List[Dict], int]:
-        """Return ticket rows joined to their latest workflow, newest first."""
-        latest_workflow = self._latest_workflow_subquery()
+        """Return ticket rows joined to their latest workflow, newest first.
 
+        Exactly one row per ticket: both the subscription tier and the latest
+        workflow come from correlated scalar subqueries, because a customer can
+        hold several subscriptions and a ticket several workflow runs.
+        """
         query: Select = (
-            select(SupportTicket, User, Subscription.plan, WorkflowRun)
+            select(SupportTicket, User, self._tier_subquery(), WorkflowRun)
             .join(User, User.id == SupportTicket.customer_id)
-            .outerjoin(Subscription, Subscription.user_id == SupportTicket.customer_id)
-            .outerjoin(
-                latest_workflow,
-                latest_workflow.c.ticket_id == SupportTicket.id,
-            )
             .outerjoin(
                 WorkflowRun,
-                WorkflowRun.workflow_id == latest_workflow.c.workflow_id,
+                WorkflowRun.workflow_id == self._latest_workflow_subquery(),
             )
             .order_by(SupportTicket.created_at.desc())
             .limit(limit)
@@ -333,26 +331,37 @@ class DashboardService:
 
         A ticket can be retried, so ``workflow_runs`` may hold several rows per
         ticket; the hub shows the newest.
+
+        Correlated rather than a join on ``MAX(started_at)``: two runs created in
+        the same transaction share ``now()`` exactly (Postgres' ``now()`` is
+        transaction-scoped), and a timestamp join would then match both and
+        duplicate the ticket row. ``workflow_id`` breaks the tie, so exactly one
+        row is returned per ticket.
         """
         newest = (
-            select(
-                WorkflowRun.ticket_id.label("ticket_id"),
-                func.max(WorkflowRun.started_at).label("started_at"),
-            )
-            .group_by(WorkflowRun.ticket_id)
-            .subquery()
+            select(WorkflowRun.workflow_id)
+            .where(WorkflowRun.ticket_id == SupportTicket.id)
+            .order_by(WorkflowRun.started_at.desc(), WorkflowRun.workflow_id)
+            .limit(1)
+            .correlate(SupportTicket)
+            .scalar_subquery()
         )
+        return newest
+
+    def _tier_subquery(self):
+        """Correlated subquery for a customer's subscription plan.
+
+        A customer may hold more than one subscription row (an upgrade history),
+        and a plain outer join would emit one ticket row per subscription. This
+        returns a single scalar instead, so a ticket is always one row.
+        """
         return (
-            select(
-                WorkflowRun.ticket_id.label("ticket_id"),
-                WorkflowRun.workflow_id.label("workflow_id"),
-            )
-            .join(
-                newest,
-                (newest.c.ticket_id == WorkflowRun.ticket_id)
-                & (newest.c.started_at == WorkflowRun.started_at),
-            )
-            .subquery()
+            select(Subscription.plan)
+            .where(Subscription.user_id == SupportTicket.customer_id)
+            .order_by(Subscription.id)
+            .limit(1)
+            .correlate(SupportTicket)
+            .scalar_subquery()
         )
 
     async def _trace_steps(self, workflow_id: uuid.UUID) -> List[Dict]:

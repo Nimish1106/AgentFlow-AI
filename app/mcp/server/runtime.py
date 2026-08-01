@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.config.settings import get_settings
 from app.mcp.schemas import ToolError
 from app.models import AuditLog
+from app.observability import tracing
 from app.services.exceptions import NotFoundError
 
 logger = logging.getLogger(__name__)
@@ -66,33 +67,43 @@ async def run_tool(
     """
     settings = get_settings()
     factory = get_session_factory()
-    try:
-        async with asyncio.timeout(settings.mcp_tool_timeout_seconds):
-            async with factory() as session:
-                result = await handler(session)
-        await _audit(tool_name, arguments, "success", workflow_id)
-        return result
-    except ValueError as exc:
-        await _audit(tool_name, arguments, "failed", workflow_id)
-        return ToolError(error=str(exc), code="invalid_input").model_dump()
-    except NotFoundError as exc:
-        await _audit(tool_name, arguments, "failed", workflow_id)
-        return ToolError(
-            error=f"{exc.__class__.__name__}: {exc}", code="not_found"
-        ).model_dump()
-    except TimeoutError:
-        await _audit(tool_name, arguments, "failed", workflow_id)
-        return ToolError(
-            error=f"{tool_name} timed out after "
-            f"{settings.mcp_tool_timeout_seconds}s",
-            code="timeout",
-        ).model_dump()
-    except Exception:  # noqa: BLE001 - MCP boundary must never leak exceptions
-        logger.exception("tool=%s unexpected failure", tool_name)
-        await _audit(tool_name, arguments, "failed", workflow_id)
-        return ToolError(
-            error=f"{tool_name} failed unexpectedly", code="internal_error"
-        ).model_dump()
+    with tracing.tool_span(tool_name, workflow_id) as span:
+        try:
+            async with asyncio.timeout(settings.mcp_tool_timeout_seconds):
+                async with factory() as session:
+                    result = await handler(session)
+            await _audit(tool_name, arguments, "success", workflow_id)
+            tracing.set_span_attributes(span, outcome="success")
+            return result
+        except ValueError as exc:
+            await _audit(tool_name, arguments, "failed", workflow_id)
+            tracing.set_span_attributes(span, outcome="invalid_input")
+            tracing.record_error(span, "invalid_input")
+            return ToolError(error=str(exc), code="invalid_input").model_dump()
+        except NotFoundError as exc:
+            await _audit(tool_name, arguments, "failed", workflow_id)
+            tracing.set_span_attributes(span, outcome="not_found")
+            tracing.record_error(span, "not_found")
+            return ToolError(
+                error=f"{exc.__class__.__name__}: {exc}", code="not_found"
+            ).model_dump()
+        except TimeoutError:
+            await _audit(tool_name, arguments, "failed", workflow_id)
+            tracing.set_span_attributes(span, outcome="timeout")
+            tracing.record_error(span, "timeout")
+            return ToolError(
+                error=f"{tool_name} timed out after "
+                f"{settings.mcp_tool_timeout_seconds}s",
+                code="timeout",
+            ).model_dump()
+        except Exception as exc:  # noqa: BLE001 - MCP boundary never leaks
+            logger.exception("tool=%s unexpected failure", tool_name)
+            await _audit(tool_name, arguments, "failed", workflow_id)
+            tracing.set_span_attributes(span, outcome="internal_error")
+            tracing.record_error(span, exc)
+            return ToolError(
+                error=f"{tool_name} failed unexpectedly", code="internal_error"
+            ).model_dump()
 
 
 async def _audit(

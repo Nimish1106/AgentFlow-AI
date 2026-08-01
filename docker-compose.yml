@@ -55,6 +55,11 @@ services:
       REDIS_URL: redis://redis:6379/0
       MCP_SERVER_URL: http://enterprise-mcp:8000
       QDRANT_URL: http://qdrant:6333
+      # Observability (SRS §42). Off unless OTEL_ENABLED=true; with no endpoint
+      # set, spans print to this service's logs.
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_SERVICE_NAME: agentflow-backend
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     ports:
       - "8000:8000"
     depends_on:
@@ -75,6 +80,11 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-agentflow}:${POSTGRES_PASSWORD:-agentflow}@postgres:5432/${POSTGRES_DB:-agentflow}
       QDRANT_URL: http://qdrant:6333
+      # Observability (SRS §42). Off unless OTEL_ENABLED=true; with no endpoint
+      # set, spans print to this service's logs.
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_SERVICE_NAME: agentflow-mcp
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     ports:
       - "8001:8000"
     depends_on:
@@ -100,6 +110,11 @@ services:
       REDIS_URL: redis://redis:6379/0
       MCP_SERVER_URL: http://enterprise-mcp:8000
       QDRANT_URL: http://qdrant:6333
+      # Observability (SRS §42). Off unless OTEL_ENABLED=true; with no endpoint
+      # set, spans print to this service's logs.
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_SERVICE_NAME: agentflow-dispatcher
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       # The dispatcher is the only service that calls the LLM.
       GROQ_API_KEY: ${GROQ_API_KEY:-}
     depends_on:

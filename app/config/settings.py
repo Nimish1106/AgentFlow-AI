@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "AgentFlow AI"
+    app_version: str = "1.0.0"
     environment: str = "development"
     log_level: str = "INFO"
 
@@ -67,6 +68,13 @@ class Settings(BaseSettings):
         "http://localhost:3000,http://127.0.0.1:3000,"
         "http://localhost:5173,http://127.0.0.1:5173"
     )
+
+    # Observability (SRS §42). Off by default: enabling it must be a deliberate
+    # act, and the unit suite / offline runs need no collector listening.
+    # With tracing on and no endpoint set, spans go to the console exporter.
+    otel_enabled: bool = False
+    otel_service_name: str = "agentflow"
+    otel_exporter_otlp_endpoint: str = ""
 
     # LLM (SRS §8: Groq). Agents never read env vars directly (SRS §46) - they
     # receive an LLM built from these settings.

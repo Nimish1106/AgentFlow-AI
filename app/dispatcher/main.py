@@ -23,6 +23,7 @@ from app.dispatcher.runner import WorkflowRunner
 from app.graph.checkpointer import checkpointer_context
 from app.graph.workflow import build_workflow_graph
 from app.observability.logging import configure_logging
+from app.observability.tracing import configure_tracing
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,9 @@ def build_redis_client() -> redis.Redis:
 async def run_dispatcher() -> None:
     """Wire the graph, checkpointer, queue and runner, then consume forever."""
     configure_logging()
+    # Node and MCP-tool spans (SRS §42). A no-op unless OTEL_ENABLED is set,
+    # so the dispatcher runs identically with no collector present.
+    configure_tracing()
     logger.info("workflow dispatcher starting")
 
     client = build_redis_client()

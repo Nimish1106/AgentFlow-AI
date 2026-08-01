@@ -27,6 +27,14 @@ mcp>=1.29,<2.0
 qdrant-client>=1.12,<2.0
 fastembed>=0.5,<1.0
 
+# Observability (SRS §42). The API and SDK are stable 1.x; the instrumentation
+# line is versioned 0.x/bN by upstream convention and must stay in lockstep with
+# the SDK release it was built against.
+opentelemetry-api>=1.44,<2.0
+opentelemetry-sdk>=1.44,<2.0
+opentelemetry-exporter-otlp-proto-http>=1.44,<2.0
+opentelemetry-instrumentation-fastapi==0.65b0
+
 # Testing
 pytest>=8.0
 pytest-asyncio>=0.23
