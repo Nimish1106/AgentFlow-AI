@@ -19,7 +19,7 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 from app.graph.constants import AgentName
-from app.graph.state import AgentResult, GraphState
+from app.graph.state import AgentResult, GraphState, build_node_execution
 
 logger = logging.getLogger(__name__)
 
@@ -149,4 +149,15 @@ async def aggregator_node(state: GraphState) -> Dict:
     return {
         "current_node": NODE_NAME,
         "shared_context": {CONTEXT_KEY: aggregation},
+        "node_executions": [
+            build_node_execution(
+                node=NODE_NAME,
+                status="success",
+                execution_time_ms=elapsed_ms,
+                summary=(
+                    f"Merged {len(merged)} agent result(s); "
+                    f"{len(failed)} failed, {len(conflicts)} conflict(s)"
+                ),
+            )
+        ],
     }

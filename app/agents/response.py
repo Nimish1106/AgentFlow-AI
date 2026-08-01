@@ -21,7 +21,7 @@ from app.agents.base import build_user_prompt
 from app.agents.policy import format_agent_results
 from app.agents.schemas import ResponseOutcome
 from app.graph.constants import AgentName
-from app.graph.state import AgentResult, GraphState
+from app.graph.state import AgentResult, GraphState, build_node_execution
 from app.prompts.agents import RESPONSE_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -70,6 +70,14 @@ def make_response_agent_node(
                 "workflow_status": "failed",
                 "completed_agents": [NODE_NAME],
                 "errors": [f"{NODE_NAME}: response generation failed: {exc}"],
+                "node_executions": [
+                    build_node_execution(
+                        node=NODE_NAME,
+                        status="failed",
+                        execution_time_ms=(time.perf_counter() - started) * 1000,
+                        summary=f"response generation failed: {exc}",
+                    )
+                ],
             }
 
         result = AgentResult(
@@ -103,6 +111,15 @@ def make_response_agent_node(
             "completed_agents": [NODE_NAME],
             "final_response": outcome.customer_response,
             "messages": [AIMessage(content=outcome.customer_response)],
+            "node_executions": [
+                build_node_execution(
+                    node=NODE_NAME,
+                    status="success",
+                    execution_time_ms=elapsed_ms,
+                    confidence=outcome.confidence,
+                    summary=outcome.resolution_summary,
+                )
+            ],
         }
 
     return response_agent_node

@@ -21,7 +21,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from app.config.settings import get_settings
 from app.graph.constants import AgentName
 from app.graph.nodes.aggregator import CONTEXT_KEY as AGGREGATION_KEY
-from app.graph.state import AgentResult, GraphState
+from app.graph.state import AgentResult, GraphState, build_node_execution
 
 logger = logging.getLogger(__name__)
 
@@ -201,4 +201,16 @@ async def risk_engine_node(state: GraphState) -> Dict:
         "risk_score": assessment["risk_score"],
         "requires_hitl": assessment["requires_hitl"],
         "shared_context": {CONTEXT_KEY: assessment},
+        "node_executions": [
+            build_node_execution(
+                node=NODE_NAME,
+                status="success",
+                execution_time_ms=elapsed_ms,
+                summary=(
+                    f"risk={assessment['risk_level']} "
+                    f"score={assessment['risk_score']:.2f} "
+                    f"requires_hitl={assessment['requires_hitl']}"
+                ),
+            )
+        ],
     }

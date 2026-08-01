@@ -58,6 +58,28 @@ class AgentResult(TypedDict):
     output_data: Dict
 
 
+class NodeExecution(TypedDict):
+    """One node's execution record, for the operations timeline (SRS §18.6).
+
+    Every node - reasoning agent *and* deterministic governance node - appends
+    exactly one of these, so the ordered list is the workflow's execution trace.
+    ``AgentResult`` cannot serve this purpose: it is a fixed SRS §23 contract
+    that only the reasoning agents produce, and it carries no timing.
+
+    The dispatcher persists these as ``agent_execution_logs`` rows, which is
+    what ``GET /workflows/{id}/trace`` serves to the dashboard. ``confidence``
+    is None for deterministic nodes - they do not reason, so they have no
+    confidence to report.
+    """
+
+    node: str
+    status: AgentStatus
+    execution_time_ms: float
+    tool_calls: List[str]
+    confidence: Optional[float]
+    summary: str
+
+
 class GraphState(TypedDict):
     """Single source of truth for a workflow run (SRS §21)."""
 
@@ -89,6 +111,9 @@ class GraphState(TypedDict):
     # Reducers: parallel agent branches append instead of overwriting (SRS §21).
     agent_results: Annotated[List[AgentResult], operator.add]
     errors: Annotated[List[str], operator.add]
+    #: Ordered execution trace, one entry per node. Reduced because parallel
+    #: domain agents all append in the same superstep.
+    node_executions: Annotated[List[NodeExecution], operator.add]
 
 
 def build_initial_state(
@@ -126,4 +151,25 @@ def build_initial_state(
         final_response=None,
         agent_results=[],
         errors=[],
+        node_executions=[],
+    )
+
+
+def build_node_execution(
+    *,
+    node: str,
+    status: AgentStatus,
+    execution_time_ms: float,
+    summary: str,
+    tool_calls: Optional[List[str]] = None,
+    confidence: Optional[float] = None,
+) -> NodeExecution:
+    """Build one execution-trace entry (SRS §18.6 agent_execution_logs)."""
+    return NodeExecution(
+        node=node,
+        status=status,
+        execution_time_ms=round(execution_time_ms, 1),
+        tool_calls=list(tool_calls or []),
+        confidence=confidence,
+        summary=summary,
     )

@@ -4,9 +4,10 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import approvals, health, tickets, workflows
+from app.api.routes import approvals, dashboard, health, tickets, workflows
 from app.config.settings import get_settings
 from app.database.redis import close_redis_pool
 from app.database.session import engine
@@ -32,7 +33,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# The dashboard is served from a different origin in development (Vite on
+# :5173) and through its own container in Compose, so the browser needs CORS.
+# Origins come from settings, never a wildcard (SRS §43).
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_settings().cors_allow_origins_list,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
+
 app.include_router(health.router)
+# Registered before the parameterised ticket/workflow routers: FastAPI matches
+# in registration order, and `/workflows/{workflow_id}` would otherwise swallow
+# the literal `/workflows` list path's siblings.
+app.include_router(dashboard.router)
 app.include_router(tickets.router)
 app.include_router(workflows.router)
 app.include_router(approvals.router)

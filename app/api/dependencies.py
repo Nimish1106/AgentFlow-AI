@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.redis import get_redis
 from app.database.session import get_db
 from app.services.approval_service import ApprovalService
+from app.services.dashboard_service import DashboardService
 from app.services.queue_service import QueueService
 from app.services.ticket_service import TicketService
 from app.services.workflow_service import WorkflowService
@@ -33,3 +34,10 @@ def get_workflow_service(
 ) -> WorkflowService:
     """Build a WorkflowService with a request-scoped session."""
     return WorkflowService(session)
+
+
+def get_dashboard_service(
+    session: AsyncSession = Depends(get_db),
+) -> DashboardService:
+    """Build a DashboardService with a request-scoped session (read-only)."""
+    return DashboardService(session)

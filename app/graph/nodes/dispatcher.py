@@ -22,7 +22,7 @@ import time
 from typing import Dict, List
 
 from app.config.settings import get_settings
-from app.graph.state import GraphState
+from app.graph.state import GraphState, build_node_execution
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +115,17 @@ async def dispatcher_node(state: GraphState) -> Dict:
         "current_node": NODE_NAME,
         "workflow_status": "completed",
         "shared_context": {CONTEXT_KEY: dispatch},
+        "node_executions": [
+            build_node_execution(
+                node=NODE_NAME,
+                status="success",
+                execution_time_ms=elapsed_ms,
+                summary=(
+                    f"delivered={delivered or ['nothing']}"
+                    + (f" failed={failed}" if failed else "")
+                ),
+            )
+        ],
     }
     if errors:
         update["errors"] = errors

@@ -17,7 +17,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from app.agents.base import build_user_prompt
 from app.agents.schemas import PolicyOutcome
 from app.graph.constants import AgentName
-from app.graph.state import AgentResult, GraphState
+from app.graph.state import AgentResult, GraphState, build_node_execution
 from app.prompts.agents import POLICY_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -78,6 +78,14 @@ def make_policy_agent_node(
                 "workflow_status": "failed",
                 "completed_agents": [NODE_NAME],
                 "errors": [f"{NODE_NAME}: policy evaluation failed: {exc}"],
+                "node_executions": [
+                    build_node_execution(
+                        node=NODE_NAME,
+                        status="failed",
+                        execution_time_ms=(time.perf_counter() - started) * 1000,
+                        summary=f"policy evaluation failed: {exc}",
+                    )
+                ],
             }
 
         result = AgentResult(
@@ -116,6 +124,15 @@ def make_policy_agent_node(
                 NODE_NAME: {"approved": outcome.approved, "risk": outcome.risk}
             },
             "messages": [AIMessage(content=f"{NODE_NAME}: {outcome.summary}")],
+            "node_executions": [
+                build_node_execution(
+                    node=NODE_NAME,
+                    status="success",
+                    execution_time_ms=elapsed_ms,
+                    confidence=outcome.confidence,
+                    summary=outcome.summary,
+                )
+            ],
         }
 
     return policy_agent_node

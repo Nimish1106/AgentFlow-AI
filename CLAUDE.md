@@ -25,6 +25,8 @@ Redis
 Qdrant
 SQLAlchemy
 React
+Vite
+TailwindCSS
 Docker Compose
 
 ## Development Rules
@@ -61,7 +63,7 @@ Always provide:
 
 ## Repository status
 
-**Phases 1-6 of 8 are complete** (SRS §48).
+**Phases 1-7 of 8 are complete** (SRS §48).
 
 Phase 1 — project setup, PostgreSQL, Redis, FastAPI, Docker: `app/config` (Pydantic v2 settings), `app/database` (async SQLAlchemy 2.x session + async Redis), `app/models` (User, SupportTicket, Subscription, Invoice, WorkflowRun, AgentExecutionLog, AuditLog, enums), `app/services` (Ticket/Workflow/Queue + typed exceptions), `app/api/routes` (health, tickets, workflows), `app/observability/logging.py`, Alembic migration `0001_initial_schema`, `scripts/seed_database.py`, Docker Compose (postgres/redis/backend).
 
@@ -90,7 +92,23 @@ Two defects found during live verification and fixed: **redis-py 8.x defaults `s
 
 Live-run note: with the real Groq model, a routine 49 USD duplicate-charge refund still routed to HITL — the Policy Agent returned `approved=False` at confidence 0.50, which trips three Risk Engine factors at once (policy rejection, conflict with the billing agent, two sub-threshold confidences). The governance path is working as specified; if HITL fires more often than a demo wants, tune `HITL_CONFIDENCE_THRESHOLD` or the Policy prompt rather than weakening the Risk Engine.
 
-Not started — Phases 7-8: React frontend (dashboard, workflow monitoring, approval interface — `frontend/` is empty and not in Compose), then testing/optimization/documentation.
+Phase 7 — Enterprise Support Dashboard (SRS §5, §48): `frontend/` is a Vite 8 + React 19 + TypeScript 5.9 + TailwindCSS 4 SPA (`lucide-react` icons), served in Compose by `docker/Dockerfile.frontend` (multi-stage: `node:24-alpine` build → `nginx:1.29-alpine` runtime) on **host port 3000**. `docker/nginx.conf` serves the SPA *and* reverse-proxies `/tickets|/workflows|/approvals|/metrics|/health` to `backend:8000`, so the browser sees one origin — the upstream is a `set` variable, forcing per-request Docker DNS resolution, because a literal `proxy_pass` host makes nginx refuse to boot when the backend is not up yet. Views: `TicketsTable` (operations hub — status/tier/priority badges, status filter), `ExecutionTrace` (SRS §37 pipeline rendered as a timeline with per-node timings, tool-call counts and LLM confidence; stages with no trace row show as pending), `ApprovalDrawer` (HITL review packet + approve/reject form → `POST /approvals/{workflow_id}`), `TicketSimulator` (scenario presets → `POST /tickets`), `MetricsBar` (Active Workflows / Pending HITL Approvals / Avg Execution Time + three more). `usePolling` is the only data path (no websocket exists): it pauses while the tab is hidden, aborts in-flight requests on dep change, and **keeps the last good data on screen when a poll fails** rather than blanking a populated table. Tickets/metrics poll at 4s, the trace at 2s. Build is clean under `tsc -b` and `eslint` — note `react-hooks/refs` rejects assigning a ref during render, so `usePolling` syncs its fetcher ref inside an effect.
+
+Phase 7 needed two **backend additions**, both agreed with the user before implementing:
+
+- **Five read-only endpoints** (`app/api/routes/dashboard.py` + `app/services/dashboard_service.py`): `GET /tickets`, `GET /workflows`, `GET /workflows/{id}/trace`, `GET /workflows/{id}/approval`, `GET /metrics`. SRS §36 defines only single-resource reads, but §5 makes the React app a monitoring console, which cannot list anything through `GET /tickets/{id}`. These are pure projections — no writes, no LLM, no MCP; a test asserts the dashboard never builds the graph. They are registered **before** `tickets.router`/`workflows.router` in `app/main.py` because FastAPI matches in registration order and `/workflows/{workflow_id}` would otherwise try to parse `trace` as a UUID. Page size is capped at 200 (`MAX_LIMIT`). CORS is now enabled from `settings.cors_allow_origins` (comma-separated, never a wildcard per SRS §43).
+- **Migration `0004_phase7_execution_trace`** adds `agent_execution_logs.confidence`/`summary`/`sequence` and `workflow_runs.risk_assessment` (JSON).
+
+The trace itself comes from a new reduced GraphState channel, `node_executions` (`Annotated[List[NodeExecution], operator.add]`, built via `build_node_execution`). **Every** node appends one entry — including the deterministic governance nodes, which `AgentResult` cannot represent (it is a fixed SRS §23 contract that only reasoning agents produce, and it carries no timing). `confidence` is NULL for aggregator/risk_engine/dispatcher/human_approval: they do not reason, so they have no confidence to report. Because `node_executions` is reduced, adding it to a parallel domain agent's update was safe — `tests/test_agents.py` now derives the parallel-safe allowlist from GraphState's own reducer annotations instead of hardcoding it, so an unreduced key added to a parallel agent fails the test rather than surfacing as a runtime `InvalidUpdateError`.
+
+Two governance rules were settled during Phase 7 and must not be regressed:
+
+- **Risk data is never parsed from prose.** `workflow_runs.risk_assessment` holds `{score, level, requires_hitl, reasons}`, written by `WorkflowRunner` via `extract_risk_assessment()` (which maps the graph's `risk_level`/`risk_score` onto `level`/`score`) on **both** the completion and the HITL-pause paths — the reviewer's packet must be on the row before the run is advertised as awaiting approval. It returns None when the Risk Engine never ran, so "no assessment" stays distinguishable from "assessed as no risk". An earlier draft of `dashboard_service.py` reverse-engineered the score by string-splitting the Risk Engine's log summary (`score=0.90`); that was rejected — re-wording a log line would have silently blanked the risk shown to someone approving a refund. `_risk_field()` now reads the column.
+- **`agent_execution_logs` is append-only.** An earlier draft did `DELETE`-then-reinsert to keep resumes idempotent; execution history is audit-adjacent (SRS §18.6) and is not rewritten. `_persist_trace` appends only the un-persisted tail and continues the existing `sequence`. The tail is found by `_resumed_prefix_length()`, which matches the longest **suffix** of the persisted node names against the **prefix** of the incoming trace. Matching by suffix (rather than counting rows) is what makes this correct when rows from an earlier attempt sit in front — a row count as the skip offset silently dropped a real node, which `test_history_is_never_deleted` caught. It returns 0 when nothing lines up, so the safe failure mode is a duplicate attempt in the history rather than a missing node.
+
+Live-verified against the running stack: migration 0004 applied (`alembic current` → `0004 (head)`, all four columns confirmed in `psql`), all five endpoints return through both `:8000` and the nginx proxy on `:3000`, and a ticket submitted through the proxy executed end to end. A pre-0004 workflow correctly reports `risk_score: null` / `reasons: []` instead of a fabricated value.
+
+Not started — Phase 8: testing, optimization, documentation.
 
 `srs.md` is the authoritative contract. **Read it before writing any code** — specifically Section 16 (Architectural Constraints) and Section 46 (AI Coding Rules). When scaffolding new code, follow the folder layout in Section 47 rather than inventing one.
 
@@ -137,17 +155,24 @@ Retry only recoverable failures (MCP timeout, DB connection, vector-search timeo
 ## Commands
 
 ```bash
-docker compose up --build                              # postgres, redis, qdrant, backend, enterprise-mcp, dispatcher (migrations run on boot)
+docker compose up --build                              # postgres, redis, qdrant, backend, enterprise-mcp, dispatcher, frontend (migrations run on boot)
 docker compose exec backend python -m scripts.seed_database
 docker compose exec backend python -m scripts.ingest_knowledge   # index docs/knowledge into Qdrant (offline, idempotent)
 pytest                                                 # target >=80% coverage; run from the local venv
 alembic upgrade head                                   # local venv only
 docker compose logs -f dispatcher                      # watch a workflow execute node by node
+
+cd frontend && npm install                             # once
+npm run dev                                            # Vite dev server on :5173, proxies the API to :8000
+npm run build                                          # tsc -b && vite build - must be clean
+npm run lint                                           # eslint - must be clean
 ```
+
+The dashboard is at **http://localhost:3000** once the stack is up. Changing backend code requires `docker compose up -d --build --force-recreate backend enterprise-mcp dispatcher` — a plain `up -d --build` leaves already-running containers on their old image, which shows up as new endpoints 404ing and `alembic current` failing to locate a revision that exists on disk.
 
 Note that `pytest` runs from the local venv, not inside the backend container — the container image does not ship the `tests/` directory, so `docker compose exec backend pytest` collects nothing.
 
-Services share a custom Docker bridge network. The backend reaches MCP at `http://enterprise-mcp:8000` (host port 8001) and Qdrant at `http://qdrant:6333` (host port 6333). Phase 7 adds the frontend to Compose.
+Services share a custom Docker bridge network. The backend reaches MCP at `http://enterprise-mcp:8000` (host port 8001) and Qdrant at `http://qdrant:6333` (host port 6333). The frontend container reaches the API at `http://backend:8000` through its own nginx proxy (host port 3000 → container 80).
 
 The `dispatcher` service is the only place a workflow actually runs, and the only service that needs `GROQ_API_KEY` — if a ticket sits at `pending` forever, check that container first. Its logs are the execution trace: one line per node with `workflow_id`, timings and decisions.
 
@@ -159,3 +184,5 @@ docker compose exec -T postgres psql -U agentflow -d agentflow -c "select perfor
 ```
 
 `audit_logs`' time column is named `timestamp`, not `created_at`.
+
+The dashboard's read endpoints are **unauthenticated**. SRS §43 lists JWT authentication and RBAC, and neither is implemented anywhere in the system yet — the API has no auth layer at all, which was true before Phase 7 as well. Anyone who can reach port 3000 or 8000 can read every ticket and customer record and approve any paused workflow. This is acceptable only for local development; it must be resolved before any shared or public deployment, and is the largest outstanding gap against the SRS.

@@ -1,0 +1,18 @@
+# Keep the frontend build context small and reproducible: node_modules is
+# reinstalled from the lockfile inside the image, and dist is rebuilt there.
+frontend/node_modules
+frontend/dist
+frontend/.vite
+
+# Python / tooling artefacts that never belong in any image.
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.coverage
+htmlcov
+.git
+.gitignore
+.idea
+.vscode

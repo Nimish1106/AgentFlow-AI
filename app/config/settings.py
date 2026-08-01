@@ -60,12 +60,29 @@ class Settings(BaseSettings):
     dispatch_webhook_url: str = ""
     dispatch_webhook_timeout_seconds: float = 5.0
 
+    # Operations dashboard (Phase 7). The React app is served from its own
+    # origin, so the API must allow it explicitly - never a wildcard (SRS §43).
+    # Comma-separated so it can be overridden by one env var.
+    cors_allow_origins: str = (
+        "http://localhost:3000,http://127.0.0.1:3000,"
+        "http://localhost:5173,http://127.0.0.1:5173"
+    )
+
     # LLM (SRS §8: Groq). Agents never read env vars directly (SRS §46) - they
     # receive an LLM built from these settings.
     groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"
     llm_temperature: float = 0.0
     llm_max_retries: int = 3
+
+    @property
+    def cors_allow_origins_list(self) -> list[str]:
+        """Parse ``cors_allow_origins`` into a list, dropping blanks."""
+        return [
+            origin.strip()
+            for origin in self.cors_allow_origins.split(",")
+            if origin.strip()
+        ]
 
 
 @lru_cache

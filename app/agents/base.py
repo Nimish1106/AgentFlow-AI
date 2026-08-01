@@ -31,7 +31,7 @@ from langgraph.runtime import Runtime
 from app.agents.schemas import AgentOutcome
 from app.config.settings import get_settings
 from app.graph.constants import AgentName
-from app.graph.state import AgentResult, GraphState
+from app.graph.state import AgentResult, GraphState, build_node_execution
 from app.graph.tools import build_agent_tools
 from app.mcp.client import EnterpriseMCPClient
 
@@ -146,6 +146,14 @@ def make_domain_agent_node(
                 "agent_results": [_failed_result(agent, exc)],
                 "completed_agents": [agent.value],
                 "errors": [f"{agent.value}: {exc}"],
+                "node_executions": [
+                    build_node_execution(
+                        node=agent.value,
+                        status="failed",
+                        execution_time_ms=(time.perf_counter() - started) * 1000,
+                        summary=f"{agent.value} failed: {exc}",
+                    )
+                ],
             }
 
         result = AgentResult(
@@ -176,6 +184,16 @@ def make_domain_agent_node(
             "tool_history": tool_calls,
             "shared_context": {agent.value: outcome.output_data},
             "messages": [AIMessage(content=f"{agent.value}: {outcome.summary}")],
+            "node_executions": [
+                build_node_execution(
+                    node=agent.value,
+                    status="success",
+                    execution_time_ms=elapsed_ms,
+                    tool_calls=tool_calls,
+                    confidence=outcome.confidence,
+                    summary=outcome.summary,
+                )
+            ],
         }
 
     return agent_node

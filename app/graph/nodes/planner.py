@@ -9,7 +9,7 @@ import time
 from typing import Dict
 
 from app.graph.planner import build_execution_plan
-from app.graph.state import GraphState
+from app.graph.state import GraphState, build_node_execution
 
 logger = logging.getLogger(__name__)
 
@@ -28,17 +28,28 @@ async def planner_node(state: GraphState) -> Dict:
         }
     )
 
+    agents = [task["assigned_agent"] for task in plan]
     elapsed_ms = (time.perf_counter() - started) * 1000
     logger.info(
         "workflow_id=%s node=%s tasks=%s agents=%s execution_time_ms=%.1f",
         state.get("workflow_id"),
         NODE_NAME,
         len(plan),
-        [task["assigned_agent"] for task in plan],
+        agents,
         elapsed_ms,
     )
 
     return {
         "current_node": NODE_NAME,
         "execution_plan": plan,
+        "node_executions": [
+            build_node_execution(
+                node=NODE_NAME,
+                status="success",
+                execution_time_ms=elapsed_ms,
+                summary=(
+                    f"Planned {len(plan)} task(s) for {agents or ['no domain agents']}"
+                ),
+            )
+        ],
     }

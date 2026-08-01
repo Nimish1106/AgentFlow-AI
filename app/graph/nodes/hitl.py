@@ -17,7 +17,7 @@ from typing import Dict
 from langgraph.types import interrupt
 
 from app.graph.nodes.risk_engine import CONTEXT_KEY as RISK_KEY
-from app.graph.state import GraphState
+from app.graph.state import GraphState, build_node_execution
 
 logger = logging.getLogger(__name__)
 
@@ -109,4 +109,17 @@ async def hitl_node(state: GraphState) -> Dict:
         "approval_status": approval_status,
         "workflow_status": "running",
         "shared_context": {CONTEXT_KEY: decision},
+        "node_executions": [
+            build_node_execution(
+                node=NODE_NAME,
+                status="success",
+                # The wall-clock pause is however long the reviewer took; the
+                # node itself does no work, so it reports no duration.
+                execution_time_ms=0.0,
+                summary=(
+                    f"{approval_status} by "
+                    f"{decision['reviewer_name'] or 'unknown reviewer'}"
+                ),
+            )
+        ],
     }

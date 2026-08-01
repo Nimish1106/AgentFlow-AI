@@ -122,20 +122,31 @@ class TestDomainAgentLoop:
     async def test_update_touches_only_parallel_safe_keys(
         self, fake_agent_llm_factory, fake_mcp_client_factory
     ):
-        """Domain agents run concurrently: only reduced keys may be written."""
+        """Domain agents run concurrently: only reduced keys may be written.
+
+        The allowlist is derived from GraphState's own reducer annotations
+        rather than hardcoded, so adding an unreduced key to a parallel agent
+        fails here instead of surfacing as InvalidUpdateError at runtime.
+        """
+        import typing
+
+        from app.graph.state import GraphState
+
+        reduced_keys = {
+            key
+            for key, hint in typing.get_type_hints(
+                GraphState, include_extras=True
+            ).items()
+            if getattr(hint, "__metadata__", None)
+        }
+
         llm = fake_agent_llm_factory(outcomes={AgentOutcome: domain_outcome()})
         node = make_billing_agent_node(llm=llm, mcp_client=fake_mcp_client_factory())
 
         update = await node(initial_state())
 
-        assert set(update) <= {
-            "agent_results",
-            "completed_agents",
-            "tool_history",
-            "shared_context",
-            "messages",
-            "errors",
-        }
+        assert "node_executions" in reduced_keys  # guards the derivation itself
+        assert set(update) <= reduced_keys
 
     async def test_output_data_is_namespaced_into_shared_context(
         self, fake_agent_llm_factory, fake_mcp_client_factory

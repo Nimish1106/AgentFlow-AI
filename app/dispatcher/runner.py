@@ -19,13 +19,14 @@ A run ends in one of three shapes:
 import json
 import logging
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from langgraph.types import Command
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.graph.nodes.aggregator import CONTEXT_KEY as AGGREGATION_KEY
+from app.graph.nodes.risk_engine import CONTEXT_KEY as RISK_KEY
 from app.graph.state import build_initial_state
 from app.models import AgentExecutionLog, AuditLog, SupportTicket, WorkflowRun
 from app.models.enums import SubscriptionPlan, TicketStatus, WorkflowStatus
@@ -37,6 +38,52 @@ AUDIT_ACTOR = "workflow-dispatcher"
 
 #: Graph interrupt marker in the result of ``ainvoke``.
 _INTERRUPT_KEY = "__interrupt__"
+
+
+def extract_risk_assessment(result: Dict) -> Optional[Dict]:
+    """Project the Risk Engine's assessment onto its persisted shape (SRS §39).
+
+    The graph names the level ``risk_level`` and the score ``risk_score``; the
+    stored record uses ``level``/``score``. Persisting it structurally is what
+    lets the HITL review UI show a reviewer real fields instead of re-deriving
+    the decision from prose.
+
+    Returns None when the Risk Engine never ran (a workflow that failed earlier),
+    so "no assessment" stays distinguishable from "assessed as no risk".
+    """
+    assessment = (result.get("shared_context") or {}).get(RISK_KEY)
+    if not isinstance(assessment, dict) or not assessment:
+        return None
+    return {
+        "score": assessment.get("risk_score", result.get("risk_score")),
+        "level": assessment.get("risk_level"),
+        "requires_hitl": bool(assessment.get("requires_hitl", False)),
+        "reasons": list(assessment.get("reasons") or []),
+    }
+
+
+def _resumed_prefix_length(
+    persisted: List[str], incoming: List[str]
+) -> int:
+    """How many leading ``incoming`` entries are already on disk.
+
+    A resumed workflow replays its checkpointed trace, so the entries it returns
+    overlap the rows already written. The overlap is the longest suffix of
+    ``persisted`` that is also a prefix of ``incoming``: matching against the
+    *suffix* is what makes this correct when rows from an earlier, unrelated
+    attempt sit in front of the current one.
+
+    Returns 0 when nothing lines up, which is the safe answer - the whole trace
+    is appended as a fresh attempt rather than silently dropping nodes. Counting
+    rows instead of matching them would do exactly that: one stray row would
+    shift the offset and skip a real node.
+    """
+    if not persisted or not incoming:
+        return 0
+    for length in range(min(len(persisted), len(incoming)), 0, -1):
+        if persisted[-length:] == incoming[:length]:
+            return length
+    return 0
 
 
 class WorkflowRunner:
@@ -149,22 +196,11 @@ class WorkflowRunner:
             # DB-side now() keeps every timestamp on one clock.
             workflow.completed_at = func.now()
 
-            for agent_result in result.get("agent_results", []):
-                session.add(
-                    AgentExecutionLog(
-                        workflow_id=workflow_id,
-                        agent_name=agent_result.get("agent_name", "unknown"),
-                        # Per-node timings are logged by the nodes themselves;
-                        # the runner only sees the aggregate run.
-                        execution_time_ms=0,
-                        status=(
-                            "completed"
-                            if agent_result.get("status") == "success"
-                            else "failed"
-                        ),
-                        tool_calls=len(agent_result.get("tool_calls") or []),
-                    )
-                )
+            assessment = extract_risk_assessment(result)
+            if assessment is not None:
+                workflow.risk_assessment = assessment
+
+            await self._persist_trace(session, workflow_id, result)
 
             ticket = await session.get(SupportTicket, workflow.ticket_id)
             if ticket is not None and status is WorkflowStatus.COMPLETED:
@@ -214,6 +250,80 @@ class WorkflowRunner:
             result.get("risk_score"),
         )
 
+    async def _persist_trace(
+        self, session: AsyncSession, workflow_id: uuid.UUID, result: Dict
+    ) -> None:
+        """Append new execution-trace rows to ``agent_execution_logs`` (SRS §18.6).
+
+        ``node_executions`` is checkpointed GraphState, so a resumed run returns
+        the *whole* trace - the nodes from before the HITL pause plus the ones
+        that ran after it. Only the un-persisted tail is written.
+
+        Execution history is append-only: rows already written are never deleted
+        or rewritten, so every attempt survives a resume or a re-run. The tail is
+        found by matching node names against the rows already on disk (see
+        ``_resumed_prefix_length``), and new rows continue the existing sequence,
+        which keeps a resumed trace reading continuously in order.
+
+        Falls back to ``agent_results`` for a run whose state predates the trace
+        channel (an in-flight workflow resumed across this deployment), so the
+        dashboard still shows which agents ran.
+        """
+        persisted = list(
+            await session.scalars(
+                select(AgentExecutionLog.agent_name)
+                .where(AgentExecutionLog.workflow_id == workflow_id)
+                .order_by(AgentExecutionLog.sequence)
+            )
+        )
+        next_sequence = int(
+            await session.scalar(
+                select(func.max(AgentExecutionLog.sequence)).where(
+                    AgentExecutionLog.workflow_id == workflow_id
+                )
+            )
+            or 0
+        )
+        # max() is 0 both for "no rows" and for "one row at sequence 0"; the row
+        # count disambiguates.
+        if persisted:
+            next_sequence += 1
+
+        executions = result.get("node_executions") or []
+        if not executions:
+            executions = [
+                {
+                    "node": agent_result.get("agent_name", "unknown"),
+                    "status": agent_result.get("status", "failed"),
+                    "execution_time_ms": 0.0,
+                    "tool_calls": agent_result.get("tool_calls") or [],
+                    "confidence": agent_result.get("confidence"),
+                    "summary": agent_result.get("summary"),
+                }
+                for agent_result in result.get("agent_results", [])
+            ]
+
+        already_written = _resumed_prefix_length(
+            persisted, [execution.get("node", "unknown") for execution in executions]
+        )
+        for offset, execution in enumerate(executions[already_written:]):
+            session.add(
+                AgentExecutionLog(
+                    workflow_id=workflow_id,
+                    agent_name=execution.get("node", "unknown"),
+                    execution_time_ms=int(execution.get("execution_time_ms") or 0),
+                    status=(
+                        "completed"
+                        if execution.get("status") == "success"
+                        else "failed"
+                    ),
+                    tool_calls=len(execution.get("tool_calls") or []),
+                    confidence=execution.get("confidence"),
+                    summary=execution.get("summary"),
+                    sequence=next_sequence + offset,
+                )
+            )
+
     async def _mark_running(self, workflow_id: uuid.UUID) -> None:
         """Flip the run to ``running`` before the graph starts."""
         async with self._session_factory() as session:
@@ -233,6 +343,16 @@ class WorkflowRunner:
                 return
             workflow.workflow_status = WorkflowStatus.WAITING_FOR_HITL
             workflow.current_node = result.get("current_node")
+
+            # The reviewer decides from this record, so it must be on the row
+            # before the workflow is advertised as awaiting approval.
+            assessment = extract_risk_assessment(result)
+            if assessment is not None:
+                workflow.risk_assessment = assessment
+
+            # Persist the partial trace too: the dashboard shows how far a
+            # parked workflow got while the reviewer decides.
+            await self._persist_trace(session, workflow_id, result)
             session.add(
                 AuditLog(
                     workflow_id=workflow_id,
@@ -240,9 +360,7 @@ class WorkflowRunner:
                         {
                             "event": "hitl_requested",
                             "risk_score": result.get("risk_score"),
-                            "reasons": (result.get("shared_context") or {})
-                            .get("risk", {})
-                            .get("reasons", []),
+                            "reasons": (assessment or {}).get("reasons", []),
                         }
                     ),
                     performed_by=AUDIT_ACTOR,

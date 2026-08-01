@@ -1,0 +1,160 @@
+@import 'tailwindcss';
+
+/*
+ * Dark-mode enterprise console. The palette is defined once here as CSS custom
+ * properties and consumed through Tailwind utilities, so a surface colour is
+ * never hardcoded twice across components.
+ */
+@theme {
+  --color-canvas: #08090d;
+  --color-surface: #101218;
+  --color-surface-raised: #161923;
+  --color-surface-hover: #1c2029;
+  --color-edge: #23273385;
+  --color-edge-strong: #2f3542;
+
+  --color-ink: #e8eaf0;
+  --color-ink-muted: #9aa2b4;
+  --color-ink-faint: #656d7e;
+
+  --color-accent: #6366f1;
+  --color-accent-soft: #6366f11f;
+
+  --color-ok: #34d399;
+  --color-ok-soft: #34d3991f;
+  --color-warn: #fbbf24;
+  --color-warn-soft: #fbbf241f;
+  --color-danger: #f87171;
+  --color-danger-soft: #f871711f;
+  --color-info: #60a5fa;
+  --color-info-soft: #60a5fa1f;
+
+  --font-sans: 'Inter var', 'Inter', ui-sans-serif, system-ui, -apple-system,
+    'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    /* Dense operational data reads better with tightened tracking. */
+    letter-spacing: -0.011em;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Tabular figures keep timing columns from jittering as they poll. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-edge-strong);
+    border-radius: 9999px;
+    border: 2px solid var(--color-canvas);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3b4252;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  /*
+   * Micro-animations. Every one respects prefers-reduced-motion below - an
+   * operations console is stared at for hours.
+   */
+  @keyframes fade-rise {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @keyframes slide-in-right {
+    from {
+      transform: translateX(100%);
+    }
+    to {
+      transform: none;
+    }
+  }
+
+  @keyframes pulse-ring {
+    0% {
+      box-shadow: 0 0 0 0 var(--color-accent-soft);
+    }
+    70% {
+      box-shadow: 0 0 0 6px transparent;
+    }
+    100% {
+      box-shadow: 0 0 0 0 transparent;
+    }
+  }
+
+  @keyframes shimmer {
+    from {
+      background-position: -200% 0;
+    }
+    to {
+      background-position: 200% 0;
+    }
+  }
+
+  .animate-fade-rise {
+    animation: fade-rise 0.24s ease-out both;
+  }
+
+  .animate-slide-in-right {
+    animation: slide-in-right 0.22s cubic-bezier(0.32, 0.72, 0, 1) both;
+  }
+
+  .animate-pulse-ring {
+    animation: pulse-ring 2s ease-out infinite;
+  }
+
+  .skeleton {
+    background-image: linear-gradient(
+      90deg,
+      var(--color-surface-raised) 25%,
+      var(--color-surface-hover) 50%,
+      var(--color-surface-raised) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.4s linear infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-fade-rise,
+    .animate-slide-in-right,
+    .animate-pulse-ring,
+    .skeleton {
+      animation: none;
+    }
+  }
+}

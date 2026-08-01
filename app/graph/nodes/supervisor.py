@@ -13,7 +13,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.graph.constants import AgentName, Domain
-from app.graph.state import GraphState
+from app.graph.state import GraphState, build_node_execution
 from app.prompts.supervisor import (
     SUPERVISOR_SYSTEM_PROMPT,
     SUPERVISOR_USER_PROMPT,
@@ -83,6 +83,14 @@ def make_supervisor_node(
                 "current_node": NODE_NAME,
                 "workflow_status": "failed",
                 "errors": [f"supervisor: classification failed: {exc}"],
+                "node_executions": [
+                    build_node_execution(
+                        node=NODE_NAME,
+                        status="failed",
+                        execution_time_ms=(time.perf_counter() - started) * 1000,
+                        summary=f"classification failed: {exc}",
+                    )
+                ],
             }
 
         domains = [domain.value for domain in classification.domains]
@@ -119,6 +127,14 @@ def make_supervisor_node(
             },
             "completed_agents": [AgentName.SUPERVISOR.value],
             "messages": [AIMessage(content=summary)],
+            "node_executions": [
+                build_node_execution(
+                    node=NODE_NAME,
+                    status="success",
+                    execution_time_ms=elapsed_ms,
+                    summary=summary,
+                )
+            ],
         }
 
     return supervisor_node

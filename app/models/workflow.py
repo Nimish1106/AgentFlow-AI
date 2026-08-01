@@ -3,7 +3,17 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, Uuid, func
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    Uuid,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -27,6 +37,11 @@ class WorkflowRun(Base):
         nullable=False,
     )
     current_node: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: The Risk Engine's governance decision, persisted structurally so the
+    #: HITL review UI reads real fields (``score``, ``level``, ``requires_hitl``,
+    #: ``reasons``) rather than re-deriving them from prose. NULL until the Risk
+    #: Engine runs - a workflow that fails earlier never produced an assessment.
+    risk_assessment: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -48,6 +63,15 @@ class AgentExecutionLog(Base):
     execution_time_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(50), nullable=False)
     tool_calls: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    #: Reasoning nodes report an LLM confidence; deterministic governance nodes
+    #: (aggregator, risk engine, dispatcher) have none, so this is nullable.
+    #: Surfaced by the Phase 7 execution trace, not part of the §18.6 schema.
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: Human-readable one-liner describing what the node did.
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Ordinal position in the workflow's execution trace. Needed because
+    #: parallel domain agents share a created_at to sub-second precision.
+    sequence: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

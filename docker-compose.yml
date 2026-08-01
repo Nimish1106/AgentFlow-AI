@@ -117,6 +117,21 @@ services:
     networks:
       - agentflow-network
 
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    # Internal operations & support control center (SRS §5, Phase 7). nginx
+    # serves the built SPA and reverse-proxies the API paths to `backend`, so
+    # the browser sees a single origin.
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - agentflow-network
+
 networks:
   agentflow-network:
     driver: bridge
