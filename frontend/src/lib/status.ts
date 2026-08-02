@@ -1,151 +1,173 @@
 /**
- * Shared presentation tokens and the canonical workflow pipeline.
+ * Status vocabulary and presentation tokens.
  *
- * Status colours live here rather than inline so a badge, a table row and a
- * timeline node cannot drift apart.
+ * Every status colour in the product resolves through this module. Defining
+ * them once is what keeps a table row, a rail badge and a detail header from
+ * drifting apart — the most common way a design language decays.
+ *
+ * Naming follows the workflow's own vocabulary rather than generic
+ * success/warning/error, so the code reads the way operators talk.
  */
 
-import type { TicketPriority, TicketStatus, WorkflowStatus, CustomerTier } from '../api/types'
+import type {
+  CustomerTier,
+  TicketPriority,
+  TicketStatus,
+  WorkflowStatus,
+} from '../api/types'
 
-export interface Tone {
-  /** Tailwind classes for a filled pill. */
-  chip: string
-  /** Bare colour class for icons and text. */
-  text: string
-  /** Background for a timeline dot or an accent bar. */
-  dot: string
+export type Semantic = 'neutral' | 'running' | 'ok' | 'attention' | 'failed'
+
+/** Text colour for a status word. Text-safe values, >=4.5:1 on white. */
+export const SEMANTIC_FG: Record<Semantic, string> = {
+  neutral: 'text-fg-subtle',
+  running: 'text-running',
+  ok: 'text-ok',
+  attention: 'text-attention',
+  failed: 'text-failed',
 }
 
-const TONES = {
-  neutral: {
-    chip: 'bg-surface-hover text-ink-muted ring-1 ring-edge-strong',
-    text: 'text-ink-muted',
-    dot: 'bg-ink-faint',
-  },
-  info: {
-    chip: 'bg-info-soft text-info ring-1 ring-info/25',
-    text: 'text-info',
-    dot: 'bg-info',
-  },
-  ok: {
-    chip: 'bg-ok-soft text-ok ring-1 ring-ok/25',
-    text: 'text-ok',
-    dot: 'bg-ok',
-  },
-  warn: {
-    chip: 'bg-warn-soft text-warn ring-1 ring-warn/25',
-    text: 'text-warn',
-    dot: 'bg-warn',
-  },
-  danger: {
-    chip: 'bg-danger-soft text-danger ring-1 ring-danger/25',
-    text: 'text-danger',
-    dot: 'bg-danger',
-  },
-  accent: {
-    chip: 'bg-accent-soft text-accent ring-1 ring-accent/25',
-    text: 'text-accent',
-    dot: 'bg-accent',
-  },
-} as const satisfies Record<string, Tone>
-
-export type ToneName = keyof typeof TONES
-
-export function tone(name: ToneName): Tone {
-  return TONES[name]
+/**
+ * Dot colour. A 5px dot plus a word replaces the filled pill everywhere.
+ *
+ * Uses the `-solid` graphic hues, not the text hues: a colour dark enough to
+ * read as body text on white is muddy as a 5px dot, and WCAG only asks 3:1 of
+ * a non-text graphic. This split is what stops the amber status looking brown.
+ */
+export const SEMANTIC_DOT: Record<Semantic, string> = {
+  neutral: 'bg-fg-faint',
+  running: 'bg-running-solid',
+  ok: 'bg-ok-solid',
+  attention: 'bg-attention-solid',
+  failed: 'bg-failed-solid',
 }
 
-export const WORKFLOW_STATUS_TONE: Record<WorkflowStatus, ToneName> = {
+/**
+ * Tinted pill: light wash plus text-safe ink. Reserved for risk level and the
+ * attention banner.
+ */
+export const SEMANTIC_TINT: Record<Semantic, string> = {
+  neutral: 'bg-sunken text-fg-muted',
+  running: 'bg-running-dim text-running',
+  ok: 'bg-ok-dim text-ok',
+  attention: 'bg-attention-dim text-attention',
+  failed: 'bg-failed-dim text-failed',
+}
+
+export const WORKFLOW_SEMANTIC: Record<WorkflowStatus, Semantic> = {
   pending: 'neutral',
-  running: 'info',
-  waiting_for_hitl: 'warn',
+  running: 'running',
+  waiting_for_hitl: 'attention',
   completed: 'ok',
-  failed: 'danger',
+  failed: 'failed',
 }
 
-export const WORKFLOW_STATUS_LABEL: Record<WorkflowStatus, string> = {
+/**
+ * Operator-facing labels. "Queued" and "Needs review" describe what a person
+ * should do about the state; "pending" and "waiting_for_hitl" describe the
+ * enum. The former belongs in the UI.
+ */
+export const WORKFLOW_LABEL: Record<WorkflowStatus, string> = {
   pending: 'Queued',
   running: 'Running',
-  waiting_for_hitl: 'Awaiting approval',
+  waiting_for_hitl: 'Needs review',
   completed: 'Completed',
   failed: 'Failed',
 }
 
-export const TICKET_STATUS_TONE: Record<TicketStatus, ToneName> = {
-  open: 'info',
-  in_progress: 'accent',
+export const TICKET_SEMANTIC: Record<TicketStatus, Semantic> = {
+  open: 'running',
+  in_progress: 'running',
   resolved: 'ok',
   closed: 'neutral',
 }
 
-export const TICKET_STATUS_LABEL: Record<TicketStatus, string> = {
+export const TICKET_LABEL: Record<TicketStatus, string> = {
   open: 'Open',
   in_progress: 'In progress',
   resolved: 'Resolved',
   closed: 'Closed',
 }
 
-export const PRIORITY_TONE: Record<TicketPriority, ToneName> = {
-  low: 'neutral',
-  medium: 'info',
-  high: 'warn',
-  critical: 'danger',
+/**
+ * Priority is rendered as a text weight rather than a colour, except at the top
+ * two levels. If every priority is coloured, none of them reads as urgent.
+ */
+export const PRIORITY_STYLE: Record<TicketPriority, string> = {
+  low: 'text-fg-faint',
+  medium: 'text-fg-muted',
+  high: 'text-attention',
+  critical: 'text-failed font-medium',
 }
 
-export const TIER_TONE: Record<CustomerTier, ToneName> = {
-  basic: 'neutral',
-  premium: 'info',
-  enterprise: 'accent',
+export const PRIORITY_LABEL: Record<TicketPriority, string> = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  critical: 'Critical',
 }
 
-export function riskTone(level: string | null | undefined): ToneName {
-  if (level === 'high') return 'danger'
-  if (level === 'medium') return 'warn'
+/** Tier is metadata, not status — muted, and only Enterprise is emphasised. */
+export const TIER_STYLE: Record<CustomerTier, string> = {
+  basic: 'text-fg-subtle',
+  premium: 'text-fg-muted',
+  enterprise: 'text-fg font-medium',
+}
+
+export function riskSemantic(level: string | null | undefined): Semantic {
+  if (level === 'high') return 'failed'
+  if (level === 'medium') return 'attention'
   if (level === 'low') return 'ok'
   return 'neutral'
 }
 
-/** Risk score thresholds match the Risk Engine's low/medium/high (0.2/0.5/0.9). */
-export function riskToneFromScore(score: number | null | undefined): ToneName {
+/** Thresholds mirror the Risk Engine's low/medium/high scores (0.2/0.5/0.9). */
+export function riskSemanticFromScore(score: number | null | undefined): Semantic {
   if (score === null || score === undefined) return 'neutral'
-  if (score >= 0.9) return 'danger'
-  if (score >= 0.5) return 'warn'
+  if (score >= 0.9) return 'failed'
+  if (score >= 0.5) return 'attention'
   return 'ok'
 }
 
 /**
- * The workflow topology, in execution order (SRS §37).
+ * The workflow topology (SRS §37), in execution order.
  *
- * The timeline renders this as the expected path and overlays whichever steps
- * actually ran, so a viewer can see what is still ahead. Domain agents are
- * grouped: the planner fans out to whichever subset the ticket needs, and they
- * execute in parallel.
+ * The trace renders this as the expected path and overlays the nodes that
+ * actually ran, so an operator can see what is still ahead as well as what
+ * happened. Mirrors `app/graph/workflow.py`: a node added to the graph must be
+ * added here or the timeline will silently omit it.
  */
-export interface PipelineStage {
-  /** Node ids from the backend that satisfy this stage. */
+export interface Stage {
+  /** Backend node ids satisfying this stage. */
   nodes: string[]
   label: string
-  /** Parallel fan-out rather than a single sequential node. */
+  /** A plan-driven fan-out rather than one sequential node. */
   parallel?: boolean
+  /** Runs only when the Risk Engine demands a human. */
+  conditional?: boolean
 }
 
-export const PIPELINE: PipelineStage[] = [
+export const PIPELINE: Stage[] = [
   { nodes: ['supervisor'], label: 'Supervisor' },
-  { nodes: ['task_planner'], label: 'Task Planner' },
+  { nodes: ['task_planner'], label: 'Planner' },
   {
     nodes: ['billing_agent', 'account_agent', 'technical_agent'],
-    label: 'Domain Agents',
+    label: 'Domain agents',
     parallel: true,
   },
   { nodes: ['policy_agent'], label: 'Policy' },
   { nodes: ['results_aggregator'], label: 'Aggregator' },
-  { nodes: ['risk_engine'], label: 'Risk Engine' },
-  { nodes: ['human_approval'], label: 'Human Approval' },
+  { nodes: ['risk_engine'], label: 'Risk engine' },
+  { nodes: ['human_approval'], label: 'Human approval', conditional: true },
   { nodes: ['response_agent'], label: 'Response' },
-  { nodes: ['dispatcher'], label: 'Dispatcher' },
+  { nodes: ['dispatcher'], label: 'Dispatch' },
 ]
 
-/** Nodes that reason with an LLM; the rest are deterministic Python. */
+/**
+ * Nodes that call an LLM. The rest are deterministic Python, and the trace
+ * distinguishes them: a 0ms deterministic node is healthy, whereas a 0ms
+ * reasoning node would be suspicious.
+ */
 export const REASONING_NODES = new Set([
   'supervisor',
   'billing_agent',
@@ -154,3 +176,6 @@ export const REASONING_NODES = new Set([
   'policy_agent',
   'response_agent',
 ])
+
+/** Confidence below the backend's HITL threshold (0.6) is worth flagging. */
+export const LOW_CONFIDENCE = 0.6

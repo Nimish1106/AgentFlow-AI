@@ -1,54 +1,41 @@
 /**
- * Live Execution Trace & Timeline.
+ * Execution trace.
  *
- * Renders the SRS §37 pipeline (Supervisor -> Planner -> Domain Agents ->
- * Policy -> Aggregator -> Risk Engine -> Response -> Dispatcher) and overlays
- * the steps that actually executed, so a viewer sees both what happened and
- * what is still ahead.
+ * The single most valuable diagnostic surface in the product, and the one the
+ * previous design wasted: it printed timings as text, so a 12-second agent and
+ * a 0ms deterministic node looked identical.
  *
- * Only nodes that ran produce a trace row. A stage with no matching row is
- * either pending or was skipped - the planner fans out to just the domain
- * agents a ticket needs, and human approval only runs when risk demands it.
+ * Here every executed node gets a bar proportional to its share of total
+ * wall-clock. "Where did the time go" becomes answerable at a glance, which is
+ * the only question anyone opens this panel to ask.
+ *
+ * The full SRS §37 topology is always rendered, so stages that have not run yet
+ * read as pending rather than being invisible.
  */
 
-import {
-  AlertTriangle,
-  Bot,
-  CheckCircle2,
-  ChevronRight,
-  Circle,
-  Cpu,
-  GitBranch,
-  Loader2,
-  Wrench,
-} from 'lucide-react'
+import { Bot, Cpu } from 'lucide-react'
 import type { TraceStep, WorkflowTrace } from '../api/types'
-import { formatConfidence, formatDuration, humanizeNode } from '../lib/format'
+import { formatConfidence, formatDurationTerse, humanizeNode } from '../lib/format'
 import {
+  LOW_CONFIDENCE,
   PIPELINE,
   REASONING_NODES,
-  riskToneFromScore,
-  tone,
-  WORKFLOW_STATUS_LABEL,
-  WORKFLOW_STATUS_TONE,
+  WORKFLOW_LABEL,
+  WORKFLOW_SEMANTIC,
+  riskSemanticFromScore,
 } from '../lib/status'
-import { Badge, Card, EmptyState, ErrorNote, SectionHeader } from './ui'
+import { Empty, Panel, PanelHead, Pill, Status } from './primitives'
 
-type StageState = 'done' | 'failed' | 'active' | 'pending'
+type StageState = 'done' | 'failed' | 'active' | 'skipped' | 'pending'
 
 interface RenderedStage {
   label: string
   parallel: boolean
+  conditional: boolean
   state: StageState
   steps: TraceStep[]
 }
 
-/**
- * Zip the executed steps onto the canonical pipeline.
- *
- * A stage is `active` when it is the workflow's current node, `done`/`failed`
- * from its steps' statuses, and `pending` when nothing has run yet.
- */
 function buildStages(trace: WorkflowTrace | null): RenderedStage[] {
   const byNode = new Map<string, TraceStep[]>()
   for (const step of trace?.steps ?? []) {
@@ -57,80 +44,124 @@ function buildStages(trace: WorkflowTrace | null): RenderedStage[] {
     else byNode.set(step.agent_name, [step])
   }
 
+  const terminal =
+    trace?.workflow_status === 'completed' || trace?.workflow_status === 'failed'
+
   return PIPELINE.map((stage) => {
     const steps = stage.nodes.flatMap((node) => byNode.get(node) ?? [])
     const isCurrent =
-      trace?.current_node !== null &&
-      trace?.current_node !== undefined &&
-      stage.nodes.includes(trace.current_node)
+      !!trace?.current_node && stage.nodes.includes(trace.current_node)
 
     let state: StageState = 'pending'
-    if (steps.some((step) => step.status !== 'completed')) state = 'failed'
+    if (steps.some((s) => s.status !== 'completed')) state = 'failed'
     else if (steps.length > 0) state = 'done'
-    // A running workflow sitting on this node outranks "done": the node may be
-    // re-entered, as human_approval is on resume.
+    // A conditional stage that never ran on a finished workflow was skipped by
+    // design (no human was needed), not left pending.
+    else if (stage.conditional && terminal) state = 'skipped'
+    else if (terminal) state = 'skipped'
+
     if (isCurrent && trace?.workflow_status === 'running') state = 'active'
     if (isCurrent && trace?.workflow_status === 'waiting_for_hitl') state = 'active'
 
-    return { label: stage.label, parallel: stage.parallel ?? false, state, steps }
+    return {
+      label: stage.label,
+      parallel: stage.parallel ?? false,
+      conditional: stage.conditional ?? false,
+      state,
+      steps,
+    }
   })
 }
 
-function StageIcon({ state }: { state: StageState }) {
-  if (state === 'done') return <CheckCircle2 size={15} className="text-ok" />
-  if (state === 'failed') return <AlertTriangle size={15} className="text-danger" />
-  if (state === 'active')
-    return <Loader2 size={15} className="animate-spin text-info" />
-  return <Circle size={15} className="text-ink-faint" />
+/**
+ * Rail and label colours per stage state.
+ *
+ * The rail is a graphic, so it uses the `-solid` hues: the text-safe hues are
+ * tuned for legibility as words on white and read muddy as a 3px spine.
+ */
+const STATE_STYLE: Record<StageState, { rail: string; text: string }> = {
+  done: { rail: 'bg-ok-solid', text: 'text-fg' },
+  failed: { rail: 'bg-failed-solid', text: 'text-failed' },
+  active: { rail: 'bg-running-solid', text: 'text-running' },
+  skipped: { rail: 'bg-line-strong', text: 'text-fg-faint' },
+  pending: { rail: 'bg-line-strong', text: 'text-fg-faint' },
 }
 
-function StepDetail({ step }: { step: TraceStep }) {
-  const isReasoning = REASONING_NODES.has(step.agent_name)
+/**
+ * One executed node.
+ *
+ * The bar is the component's reason for existing: width is the node's share of
+ * total run time, so the expensive step is visually obvious without reading a
+ * single number.
+ */
+function StepRow({ step, totalMs }: { step: TraceStep; totalMs: number }) {
+  const reasoning = REASONING_NODES.has(step.agent_name)
   const failed = step.status !== 'completed'
+  const share = totalMs > 0 ? step.execution_time_ms / totalMs : 0
+  const lowConfidence =
+    step.confidence !== null && step.confidence < LOW_CONFIDENCE
 
   return (
-    <div
-      className={`rounded-lg border px-3 py-2 ${
-        failed ? 'border-danger/30 bg-danger-soft' : 'border-edge bg-surface-raised'
-      }`}
-    >
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-ink">
-          {isReasoning ? (
-            <Bot size={12} className="text-accent" />
-          ) : (
-            <Cpu size={12} className="text-ink-faint" />
-          )}
+    <div className="group py-1">
+      <div className="flex items-center gap-2">
+        {reasoning ? (
+          <Bot size={11} className="shrink-0 text-fg-subtle" strokeWidth={2} />
+        ) : (
+          <Cpu size={11} className="shrink-0 text-fg-faint" strokeWidth={2} />
+        )}
+
+        <span
+          className={`min-w-0 flex-1 truncate text-data ${
+            failed ? 'text-failed' : 'text-fg-muted'
+          }`}
+        >
           {humanizeNode(step.agent_name)}
         </span>
 
-        <span className="tnum text-xs text-ink-faint">
-          {formatDuration(step.execution_time_ms)}
-        </span>
-
         {step.tool_calls > 0 ? (
-          <span className="tnum inline-flex items-center gap-1 text-xs text-ink-muted">
-            <Wrench size={11} />
-            {step.tool_calls} tool call{step.tool_calls === 1 ? '' : 's'}
+          <span
+            className="tnum shrink-0 text-meta text-fg-subtle"
+            title={`${step.tool_calls} MCP tool call${step.tool_calls === 1 ? '' : 's'}`}
+          >
+            {step.tool_calls}&thinsp;<span className="text-fg-faint">tools</span>
           </span>
         ) : null}
 
         {step.confidence !== null ? (
           <span
-            className={`tnum text-xs font-medium ${
-              step.confidence < 0.6 ? 'text-warn' : 'text-ok'
+            className={`tnum shrink-0 text-meta ${
+              lowConfidence ? 'text-attention' : 'text-fg-subtle'
             }`}
-            title="LLM confidence"
+            title={
+              lowConfidence
+                ? 'Below the confidence threshold that routes to human review'
+                : 'Model confidence'
+            }
           >
-            {formatConfidence(step.confidence)} confidence
+            {formatConfidence(step.confidence)}
           </span>
         ) : null}
 
-        {failed ? <Badge toneName="danger">failed</Badge> : null}
+        <span className="tnum w-14 shrink-0 text-right text-meta text-fg-muted">
+          {formatDurationTerse(step.execution_time_ms)}
+        </span>
+      </div>
+
+      {/* Proportional duration bar. Sub-1% durations still render a hairline so
+          a fast node reads as "ran, instantly" rather than "did not run".
+          Solid fills, not 70% alpha: a translucent bar over a light gray track
+          loses almost all of its contrast. */}
+      <div className="mt-1 ml-[19px] h-[3px] overflow-hidden rounded-full bg-sunken">
+        <div
+          className={`h-full rounded-full ${failed ? 'bg-failed-solid' : 'bg-accent'}`}
+          style={{ width: `${Math.max(share * 100, share > 0 ? 1.5 : 0)}%` }}
+        />
       </div>
 
       {step.summary ? (
-        <p className="mt-1.5 text-xs leading-relaxed text-ink-muted">{step.summary}</p>
+        <p className="mt-1 ml-[19px] line-clamp-2 text-meta leading-[1.05rem] text-fg-subtle">
+          {step.summary}
+        </p>
       ) : null}
     </div>
   )
@@ -138,122 +169,148 @@ function StepDetail({ step }: { step: TraceStep }) {
 
 export function ExecutionTrace({
   trace,
-  ticketTitle,
+  title,
   loading,
   error,
 }: {
   trace: WorkflowTrace | null
-  ticketTitle: string | null
+  title: string | null
   loading: boolean
   error: string | null
 }) {
+  const stages = buildStages(trace)
+  const steps = trace?.steps ?? []
+  const totalMs = steps.reduce((sum, s) => sum + s.execution_time_ms, 0)
+  const slowest = steps.reduce<TraceStep | null>(
+    (worst, s) => (worst === null || s.execution_time_ms > worst.execution_time_ms ? s : worst),
+    null,
+  )
+
   if (!trace && !loading) {
     return (
-      <Card className="h-full">
-        <SectionHeader
-          icon={<GitBranch size={15} />}
-          title="Execution trace"
-          subtitle="Select a ticket to inspect its workflow"
-        />
-        <EmptyState
-          icon={<GitBranch size={22} />}
+      <Panel className="flex h-full flex-col">
+        <PanelHead title="Execution trace" />
+        <Empty
           title="No workflow selected"
-          hint="Pick a row in the operations hub to watch its agents execute step by step."
+          hint="Choose a ticket or workflow to inspect how its agents executed."
         />
-      </Card>
+      </Panel>
     )
   }
 
-  const stages = buildStages(trace)
-  const totalMs = (trace?.steps ?? []).reduce(
-    (sum, step) => sum + step.execution_time_ms,
-    0,
-  )
-
   return (
-    <Card className="flex h-full flex-col">
-      <SectionHeader
-        icon={<GitBranch size={15} />}
+    <Panel className="flex h-full min-h-0 flex-col">
+      <PanelHead
         title="Execution trace"
-        subtitle={ticketTitle ?? undefined}
+        meta={title ?? undefined}
         actions={
           trace ? (
             <div className="flex items-center gap-2">
               {trace.risk_score !== null ? (
-                <Badge toneName={riskToneFromScore(trace.risk_score)}>
+                <Pill semantic={riskSemanticFromScore(trace.risk_score)}>
                   risk {trace.risk_score.toFixed(2)}
-                </Badge>
+                </Pill>
               ) : null}
-              <Badge toneName={WORKFLOW_STATUS_TONE[trace.workflow_status] ?? 'neutral'}>
-                {WORKFLOW_STATUS_LABEL[trace.workflow_status] ?? trace.workflow_status}
-              </Badge>
+              <Status
+                semantic={WORKFLOW_SEMANTIC[trace.workflow_status]}
+                label={WORKFLOW_LABEL[trace.workflow_status]}
+                pulse={trace.workflow_status === 'running'}
+              />
             </div>
           ) : null
         }
       />
 
-      <div className="flex-1 overflow-y-auto px-5 py-4">
+      {/* Run summary. Total and the dominant node answer the two questions an
+          operator has before reading any individual step. */}
+      {trace && steps.length > 0 ? (
+        <div className="flex items-center gap-4 border-b border-line px-3 py-2">
+          <div>
+            <div className="label-micro">Total</div>
+            <div className="tnum mt-0.5 text-data font-medium text-fg">
+              {formatDurationTerse(totalMs)}
+            </div>
+          </div>
+          <div className="min-w-0">
+            <div className="label-micro">Slowest node</div>
+            <div className="mt-0.5 truncate text-data text-fg-muted">
+              {slowest ? (
+                <>
+                  {humanizeNode(slowest.agent_name)}
+                  <span className="tnum ml-1.5 text-fg-subtle">
+                    {formatDurationTerse(slowest.execution_time_ms)}
+                  </span>
+                </>
+              ) : (
+                '—'
+              )}
+            </div>
+          </div>
+          <div className="ml-auto text-right">
+            <div className="label-micro">Nodes</div>
+            <div className="tnum mt-0.5 text-data text-fg-muted">{steps.length}</div>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
         {error ? (
-          <div className="mb-3">
-            <ErrorNote message={error} />
+          <div className="mb-2 rounded-sm border border-failed/30 bg-failed-dim px-2.5 py-1.5 text-meta text-failed">
+            {error}
           </div>
         ) : null}
 
         {loading && !trace ? (
-          <div className="space-y-3">
-            {Array.from({ length: 6 }).map((_, index) => (
-              <div key={index} className="skeleton h-12 rounded-lg" />
+          <div className="space-y-2 py-1">
+            {Array.from({ length: 7 }).map((_, i) => (
+              <div key={i} className="skeleton h-8 rounded-sm" />
             ))}
           </div>
         ) : (
-          <ol className="relative space-y-1">
+          <ol>
             {stages.map((stage, index) => {
-              const isLast = index === stages.length - 1
+              const last = index === stages.length - 1
+              const style = STATE_STYLE[stage.state]
               return (
-                <li key={stage.label} className="animate-fade-rise flex gap-3">
-                  {/* Rail: icon plus the connector down to the next stage. */}
-                  <div className="flex flex-col items-center">
-                    <span
-                      className={`flex size-6 shrink-0 items-center justify-center rounded-full bg-surface ring-1 ${
-                        stage.state === 'active'
-                          ? 'animate-pulse-ring ring-info/50'
-                          : 'ring-edge-strong'
-                      }`}
-                    >
-                      <StageIcon state={stage.state} />
-                    </span>
-                    {!isLast ? (
-                      <span
-                        className={`w-px flex-1 ${
-                          stage.state === 'done' ? 'bg-ok/30' : 'bg-edge-strong'
-                        }`}
-                      />
-                    ) : null}
+                <li key={stage.label} className="flex gap-2.5">
+                  {/* Rail: a continuous 2px spine, filled where the workflow has
+                      actually reached. Reads as progress, not decoration. */}
+                  <div className="flex w-[3px] shrink-0 flex-col items-center">
+                    <span className={`h-full w-[3px] rounded-full ${style.rail}`} />
+                    {last ? null : <span className="h-1" />}
                   </div>
 
-                  <div className={`min-w-0 flex-1 ${isLast ? 'pb-0' : 'pb-4'}`}>
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`text-xs font-semibold ${
-                          stage.state === 'pending' ? 'text-ink-faint' : 'text-ink'
-                        }`}
-                      >
+                  <div className={`min-w-0 flex-1 ${last ? 'pb-1' : 'pb-2.5'}`}>
+                    <div className="flex items-center gap-2 pt-0.5">
+                      <span className={`text-data font-medium ${style.text}`}>
                         {stage.label}
                       </span>
                       {stage.parallel && stage.steps.length > 1 ? (
-                        <Badge toneName="accent">
+                        <span className="text-meta text-fg-faint">
                           {stage.steps.length} in parallel
-                        </Badge>
+                        </span>
                       ) : null}
                       {stage.state === 'pending' ? (
-                        <span className="text-xs text-ink-faint">pending</span>
+                        <span className="text-meta text-fg-faint">pending</span>
+                      ) : null}
+                      {stage.state === 'skipped' ? (
+                        <span className="text-meta text-fg-faint">
+                          {stage.conditional ? 'not required' : 'skipped'}
+                        </span>
+                      ) : null}
+                      {stage.state === 'active' ? (
+                        <span className="text-meta text-running">running</span>
                       ) : null}
                     </div>
 
                     {stage.steps.length > 0 ? (
-                      <div className="mt-1.5 space-y-1.5">
+                      <div className="mt-0.5">
                         {stage.steps.map((step) => (
-                          <StepDetail key={`${step.agent_name}-${step.sequence}`} step={step} />
+                          <StepRow
+                            key={`${step.agent_name}-${step.sequence}`}
+                            step={step}
+                            totalMs={totalMs}
+                          />
                         ))}
                       </div>
                     ) : null}
@@ -264,18 +321,6 @@ export function ExecutionTrace({
           </ol>
         )}
       </div>
-
-      {trace && trace.steps.length > 0 ? (
-        <div className="flex items-center justify-between border-t border-edge px-5 py-2.5 text-xs text-ink-faint">
-          <span className="inline-flex items-center gap-1">
-            <ChevronRight size={12} />
-            {trace.steps.length} node{trace.steps.length === 1 ? '' : 's'} executed
-          </span>
-          <span className={`tnum ${tone('neutral').text}`}>
-            total {formatDuration(totalMs)}
-          </span>
-        </div>
-      ) : null}
-    </Card>
+    </Panel>
   )
 }
