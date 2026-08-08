@@ -121,7 +121,34 @@ class WorkflowRunner:
 
     async def _execute(self, workflow_id: uuid.UUID, graph_input: Any) -> Dict:
         """Invoke the graph and persist whatever state came back."""
-        config = {"configurable": {"thread_id": str(workflow_id)}}
+        metadata: Dict[str, Any] = {"workflow_id": str(workflow_id)}
+        tags: List[str] = ["agentflow"]
+        run_name = f"Workflow-{workflow_id}"
+
+        if isinstance(graph_input, dict):
+            if graph_input.get("ticket_id"):
+                metadata["ticket_id"] = str(graph_input["ticket_id"])
+            if graph_input.get("customer_id"):
+                metadata["customer_id"] = str(graph_input["customer_id"])
+            if graph_input.get("customer_tier"):
+                tier = str(graph_input["customer_tier"])
+                metadata["customer_tier"] = tier
+                tags.append(f"tier:{tier}")
+            if graph_input.get("ticket_priority"):
+                metadata["ticket_priority"] = str(graph_input["ticket_priority"])
+        elif isinstance(graph_input, Command) and graph_input.resume:
+            resume_data = graph_input.resume
+            if isinstance(resume_data, dict):
+                metadata["hitl_approved"] = bool(resume_data.get("approved"))
+            run_name = f"Workflow-Resume-{workflow_id}"
+            tags.append("hitl-resume")
+
+        config = {
+            "configurable": {"thread_id": str(workflow_id)},
+            "metadata": metadata,
+            "tags": tags,
+            "run_name": run_name,
+        }
         await self._mark_running(workflow_id)
 
         try:

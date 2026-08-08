@@ -197,3 +197,9 @@ def build_workflow_graph(
 
     # Checkpoint after every node (SRS §46) so a run is resumable.
     return graph.compile(checkpointer=checkpointer or InMemorySaver())
+
+
+#: Top-level compiled graph instance for LangGraph Studio / LangGraph CLI.
+graph = build_workflow_graph()
+
+

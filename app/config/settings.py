@@ -76,6 +76,12 @@ class Settings(BaseSettings):
     otel_service_name: str = "agentflow"
     otel_exporter_otlp_endpoint: str = ""
 
+    # LangSmith Observability
+    langsmith_tracing: bool = False
+    langsmith_api_key: str = ""
+    langsmith_project: str = "agentflow"
+    langsmith_endpoint: str = "https://api.smith.langchain.com"
+
     # LLM (SRS §8: Groq). Agents never read env vars directly (SRS §46) - they
     # receive an LLM built from these settings.
     groq_api_key: str = ""

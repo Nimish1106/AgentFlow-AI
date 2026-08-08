@@ -11,6 +11,7 @@ from app.api.routes import approvals, dashboard, health, tickets, workflows
 from app.config.settings import get_settings
 from app.database.redis import close_redis_pool
 from app.database.session import engine
+from app.observability.langsmith import configure_langsmith
 from app.observability.logging import configure_logging
 from app.observability.tracing import configure_tracing
 
@@ -24,6 +25,7 @@ async def lifespan(app: FastAPI):
     # Instruments this app's request handling (SRS §42). A no-op unless
     # OTEL_ENABLED is set, so no collector is required to run the API.
     configure_tracing(app)
+    configure_langsmith()
     logger.info("%s starting", get_settings().app_name)
     yield
     await close_redis_pool()

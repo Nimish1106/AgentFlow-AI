@@ -22,6 +22,7 @@ from app.dispatcher.consumer import WorkflowConsumer
 from app.dispatcher.runner import WorkflowRunner
 from app.graph.checkpointer import checkpointer_context
 from app.graph.workflow import build_workflow_graph
+from app.observability.langsmith import configure_langsmith
 from app.observability.logging import configure_logging
 from app.observability.tracing import configure_tracing
 
@@ -53,6 +54,7 @@ async def run_dispatcher() -> None:
     # Node and MCP-tool spans (SRS §42). A no-op unless OTEL_ENABLED is set,
     # so the dispatcher runs identically with no collector present.
     configure_tracing()
+    configure_langsmith()
     logger.info("workflow dispatcher starting")
 
     client = build_redis_client()

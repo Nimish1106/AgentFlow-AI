@@ -17,6 +17,7 @@ import logging
 from typing import Awaitable, Callable, Dict, List
 
 from langchain_core.tools import StructuredTool
+from langsmith import traceable
 from pydantic import BaseModel, Field
 
 from app.config.settings import get_settings
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 RETRYABLE_ERROR_CODES = frozenset({"timeout"})
 
 
+@traceable(name="mcp_tool_call", run_type="tool")
 async def call_mcp_tool_with_retry(
     client: EnterpriseMCPClient,
     tool_name: str,

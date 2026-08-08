@@ -12,3 +12,4 @@ build/
 .idea/
 .vscode/
 node_modules/
+.langgraph_api/

@@ -8,7 +8,6 @@ from app.graph.state import (
     GraphState,
     build_initial_state,
 )
-from app.graph.workflow import build_workflow_graph
 
 __all__ = [
     "AgentName",
@@ -20,3 +19,12 @@ __all__ = [
     "build_initial_state",
     "build_workflow_graph",
 ]
+
+
+def __getattr__(name: str):
+    if name == "build_workflow_graph":
+        from app.graph.workflow import build_workflow_graph
+
+        return build_workflow_graph
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+
