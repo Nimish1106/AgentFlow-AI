@@ -9,13 +9,14 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-1.2-1C3C3C)](https://langchain-ai.github.io/langgraph/)
+[![LangSmith](https://img.shields.io/badge/LangSmith-Observability-0052CC?logo=langchain&logoColor=white)](https://smith.langchain.com/)
 [![MCP](https://img.shields.io/badge/MCP-FastMCP-6E56CF)](https://modelcontextprotocol.io/)
 [![Qdrant](https://img.shields.io/badge/Qdrant-1.18-DC244C?logo=qdrant&logoColor=white)](https://qdrant.tech/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 
-[![Tests](https://img.shields.io/badge/tests-400%20passing-2ea44f)](#testing)
+[![Tests](https://img.shields.io/badge/tests-405%20passing-2ea44f)](#testing)
 [![Coverage](https://img.shields.io/badge/coverage-92%25-2ea44f)](#testing)
 [![Status](https://img.shields.io/badge/status-all%208%20phases%20complete-2ea44f)](#roadmap)
 
@@ -212,7 +213,7 @@ pytest --cov=app --cov-report=term-missing   # target >=80%
 pytest tests/test_e2e.py -v                  # end-to-end pipeline
 ```
 
-**400 tests · 92% coverage · no Groq key or running infrastructure required.**
+**405 tests · 92% coverage · no Groq key or running infrastructure required.**
 
 `pytest` runs from the venv, **not** inside the container — the image does not ship `tests/`.
 
@@ -238,7 +239,25 @@ npm run lint     # eslint — must be clean
 
 Structured logs are always on; every node logs `workflow_id`, node name, execution time, tool calls and retry count.
 
-OpenTelemetry tracing (SRS §42) is **off by default** — the unit suite, a local venv and any offline run must work with no collector listening.
+### LangSmith Tracing & LangGraph Studio
+
+LangSmith observability enables full workflow visualization, node step tracing, LLM input/output logging, and MCP tool call inspection.
+
+Tracing is **optional and off by default**. Enable it by configuring your key in `.env`:
+
+```env
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=lsv2_pt_your_api_key_here
+LANGSMITH_PROJECT="AgentFlow AI"
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+```
+
+- **LangSmith Tracing**: View top-level `Workflow-<id>` traces, visual DAG flowcharts, child LLM calls (`ChatGroq`), and `@traceable` MCP tool calls.
+- **LangGraph Studio**: Run local dev environment via `langgraph dev` and connect to `http://127.0.0.1:2024` or launch directly via [LangSmith Studio](https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024).
+
+### OpenTelemetry Tracing
+
+OpenTelemetry tracing (SRS §42) is also **off by default** — the unit suite, a local venv and any offline run work with no collector listening.
 
 ```bash
 OTEL_ENABLED=true docker compose up                                                  # spans to container logs
@@ -269,11 +288,14 @@ All settings come from `.env` (see `.env.example`). The ones that matter most:
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `GROQ_API_KEY` | – | Required for real workflow execution. |
+| `LANGSMITH_TRACING` | `false` | Enables LangSmith workflow & LLM tracing. |
+| `LANGSMITH_API_KEY` | – | Your LangSmith API Key. |
+| `LANGSMITH_PROJECT` | `agentflow` | Project name in LangSmith. |
 | `HITL_REFUND_THRESHOLD` | `1000.0` | Refunds above this need human approval. |
 | `HITL_CONFIDENCE_THRESHOLD` | `0.6` | Agent confidence below this routes to review. |
 | `RAG_SCORE_THRESHOLD` | `0.6` | Below this, retrieval reports insufficient information. |
 | `EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | 384 dims. Ingestion and query must use the same model. |
-| `OTEL_ENABLED` | `false` | Enables tracing. |
+| `OTEL_ENABLED` | `false` | Enables OpenTelemetry tracing. |
 
 If human approval fires more often than a demo wants, tune the HITL thresholds or the Policy prompt rather than weakening the Risk Engine — **the governance path working is the feature.**
 
@@ -316,10 +338,11 @@ app/
   dispatcher/     Redis Streams consumer + WorkflowRunner
   services/       Business logic (ticket, billing, account, knowledge, approval)
   models/         SQLAlchemy 2.x models
-  observability/  Structured logging + OpenTelemetry
+  observability/  Structured logging, OpenTelemetry + LangSmith
 frontend/         Vite + React 19 + TypeScript + Tailwind 4 operations console
 docs/knowledge/   RAG seed corpus
-tests/            400 tests, incl. the end-to-end pipeline suite
+tests/            405 tests, incl. the end-to-end pipeline suite
+langgraph.json    LangGraph CLI / Studio configuration
 ```
 
 <div align="center">
